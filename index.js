@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA (12 JOGOS)
+// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA (12 JOGOS)
 // ============================================================
 
 console.log('========================================');
@@ -379,7 +379,7 @@ async function getPlayerAchievementsWithPercent(steamId, appId) {
   } catch (e) { return null; }
 }
 
-// --- CACHES DE NOMES E TRADUÇÃO ---
+// --- CACHES DE NOMES (mantidos para performance) ---
 const achievementNameCache = {}, achievementDescriptionCache = {};
 async function getAchievementDisplayName(appId, apiname) {
   const key = `${appId}_${apiname}`;
@@ -402,24 +402,12 @@ async function getAchievementDescription(appId, apiname) {
   } catch (_) {}
   return null;
 }
-const translationCache = new Map();
-async function traduzirTexto(texto) {
-  if (!texto || texto.length < 3) return texto;
-  const key = texto;
-  if (translationCache.has(key)) return translationCache.get(key);
-  try {
-    const r = await axios.get('https://api.mymemory.translated.net/get', { params: { q: texto, langpair: 'en|pt', de: 'steam-family-bot' }, timeout: 5000 });
-    if (r.data?.responseData?.translatedText && !r.data.responseData.translatedText.includes('INVALID')) {
-      translationCache.set(key, r.data.responseData.translatedText);
-      return r.data.responseData.translatedText;
-    }
-  } catch (_) {}
-  translationCache.set(key, texto);
-  return texto;
-}
+
+// 🔥 TRADUÇÃO DESATIVADA PARA ECONOMIA DE RECURSOS
+// (removida a função traduzirTexto e sua chamada)
 
 // ============================================================
-// 7. COMPATIBILIDADE (mantida para outros comandos, mas não usada no /conquista)
+// 7. COMPATIBILIDADE
 // ============================================================
 const JOGOS_INCOMPATIVEIS = {
   33930: "Arma 2: Operation Arrowhead", 107410: "Arma 3", 582660: "Black Desert", 1097150: "Fall Guys",
@@ -632,7 +620,7 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
 }
 
 // ============================================================
-// 10. VERIFICAÇÕES PERIÓDICAS
+// 10. VERIFICAÇÕES PERIÓDICAS (COM INTERVALOS AUMENTADOS)
 // ============================================================
 let isCheckingNewGames = false;
 let isCheckingAchievementsLock = false;
@@ -644,7 +632,10 @@ async function checkAchievements() {
     for (const steamId of STEAM_IDS_ARRAY) {
       const member = MEMBROS[steamId];
       if (!member) continue;
-      const limit = member.nome === 'Gardemi' ? 6 : 12;
+      const userName = member.nome;
+      // 🔥 MANTIDO: 12 jogos para todos, exceto Gardemi com 6
+      let limit = 12;
+      if (userName === 'Gardemi') limit = 6;
       const recentGames = await getRecentlyPlayedGames(steamId, limit);
       if (!recentGames?.length) continue;
       const unique = [], seen = new Set();
@@ -889,7 +880,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 client.on('error', (e) => console.error('❌ [ERROR]', e));
 
 // ============================================================
-// 13. READY (USANDO clientReady PARA EVITAR DEPRECATION)
+// 13. READY (USANDO clientReady)
 // ============================================================
 client.once('clientReady', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -923,13 +914,14 @@ client.once('clientReady', async () => {
 
   await verificarEEnviarRegras();
 
-  setInterval(checkAchievements, 30000);
-  setInterval(checkNewGames, 300000);
-  setInterval(verificarLancamentosQuero, 5 * 60 * 1000);
-  setInterval(verificarPromocoesQuero, 5 * 60 * 1000);
+  // 🔥 INTERVALOS AUMENTADOS PARA ECONOMIA DE RECURSOS
+  setInterval(checkAchievements, 60000);          // 1 minuto (antes 30s)
+  setInterval(checkNewGames, 600000);             // 10 minutos (antes 5min)
+  setInterval(verificarLancamentosQuero, 900000); // 15 minutos (antes 5min)
+  setInterval(verificarPromocoesQuero, 900000);   // 15 minutos (antes 5min)
 
   if (DONO_ID) {
-    try { const dono = await client.users.fetch(DONO_ID); await dono.send('🚀 Bot Steam Família online!'); } catch (_) {}
+    try { const dono = await client.users.fetch(DONO_ID); await dono.send('🚀 Bot Steam Família online! (modo econômico)'); } catch (_) {}
   }
 });
 
@@ -951,7 +943,7 @@ client.on('interactionCreate', async (interaction) => {
         version: db.rankingVersion,
         jogosAnunciados: db.jogosAnunciados?.length || 0
       },
-      cache: { videos: Object.keys(videoCache).length, traducoes: translationCache.size },
+      cache: { videos: Object.keys(videoCache).length },
       membros: Object.keys(MEMBROS).length,
       steamIds: STEAM_IDS_ARRAY.length
     };
@@ -964,7 +956,6 @@ client.on('interactionCreate', async (interaction) => {
         { name: '📚 Versão', value: `${status.database.version}`, inline: true },
         { name: '📢 Anúncios únicos', value: `${status.database.jogosAnunciados}`, inline: true },
         { name: '🎬 Vídeos cache', value: `${status.cache.videos}`, inline: true },
-        { name: '🌐 Traduções', value: `${status.cache.traducoes}`, inline: true },
         { name: '👥 Membros', value: `${status.membros}`, inline: true },
         { name: '🔄 Steam IDs', value: `${status.steamIds}`, inline: true }
       ).setTimestamp();
@@ -1090,7 +1081,7 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  // --- /conquista (SEM VERIFICAÇÃO DE COMPATIBILIDADE) ---
+  // --- /conquista (COM TRADUÇÃO DESATIVADA) ---
   if (interaction.commandName === 'conquista') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const nomeJogo = interaction.options.getString('jogo').trim();
@@ -1101,7 +1092,6 @@ client.on('interactionCreate', async (interaction) => {
     for (const [sid, m] of Object.entries(MEMBROS)) if (m.discordId === interaction.user.id) { userSteamId = sid; break; }
     if (!userSteamId) { await interaction.editReply('❌ Você não é membro da família.'); return; }
     
-    // Verificar se o jogo está na família (apenas para exibição, não bloqueia)
     let donos = [];
     for (const [sid, jogos] of Object.entries(db.historicoJogos || {})) if (jogos.includes(appid)) { const m = MEMBROS[sid]; if (m) donos.push(m); }
     if (!donos.length) {
@@ -1111,10 +1101,6 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
     if (!donos.length) { await interaction.editReply(`❌ Nenhum membro possui **${jogoInfo.nome}**.`); return; }
-
-    // 🔥 REMOVIDA A VERIFICAÇÃO DE COMPATIBILIDADE
-    // const compat = await verificarCompatibilidadeFamilia(appid);
-    // if (!compat.compatível) { ... return; }
 
     let schema;
     try { schema = await fetchSteam('https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/', { key: STEAM_KEY, appid, l: 'portuguese' }, 2); } catch (_) { await interaction.editReply('❌ Erro ao buscar conquistas.'); return; }
@@ -1139,8 +1125,8 @@ client.on('interactionCreate', async (interaction) => {
     async function generateAchievementEmbed(ach, index) {
       let imageUrl = ach.icon ? (ach.icon.startsWith('http') ? ach.icon : `https://cdn.steamstatic.com/steamcommunity/public/images/apps/${appid}/${ach.icon}`) : null;
       if (!imageUrl || imageUrl.includes('null')) imageUrl = `https://cdn.cloudflare.steamstatic.com/steam/apps/${appid}/header.jpg`;
-      let desc = ach.description;
-      if (desc && desc.length > 3 && !/[áàâãéêíóôõúç]/i.test(desc)) { const t = await traduzirTexto(desc); if (t && !t.includes('INVALID')) desc = t; }
+      // 🔥 TRADUÇÃO DESATIVADA – manter descrição original em inglês
+      const desc = ach.description || 'Sem descrição disponível';
       const embed = new EmbedBuilder().setColor(ach.desbloqueada ? 0x00FF00 : 0xFF4444).setTitle(`🏆 ${ach.displayName}`).setDescription(desc)
         .addFields({ name: '🎮 Jogo', value: jogoInfo.nome, inline: true }, { name: '📊 Status', value: ach.status, inline: true }, { name: '📈 Progresso', value: `${index+1}/${total}`, inline: true })
         .setThumbnail(imageUrl).setFooter({ text: `🎯 ${desbloq}/${total} desbloqueadas • Faltam ${faltam}` }).setTimestamp();
@@ -1263,95 +1249,49 @@ client.on('messageCreate', async (message) => {
 
   // --- RESPOSTAS AUTOMÁTICAS EM DM ---
   if (!message.guild) {
-    console.log(`📩 DM recebida de ${message.author.tag}: "${message.content}"`);
-
     try {
       const content = message.content.toLowerCase().trim();
-
       const patterns = [
         /^(a gente tem|tem o jogo|possui o|temos o|vc tem|você tem|alguém tem|tem o|tem) (.+)/i,
         /^(a gente tem|tem o jogo|possui o|temos o|vc tem|você tem|alguém tem|tem o) (.+)\?/i,
         /^(.+)\?$/i
       ];
-
       let jogoNome = null;
       for (const pattern of patterns) {
         const match = content.match(pattern);
-        if (match) {
-          jogoNome = match[2] || match[1];
-          break;
-        }
+        if (match) { jogoNome = match[2] || match[1]; break; }
       }
-
-      if (!jogoNome) {
-        console.log(`ℹ️ Nenhum nome de jogo identificado em "${message.content}"`);
-        return;
-      }
-
+      if (!jogoNome) return;
       jogoNome = jogoNome.trim();
-      console.log(`🔍 Buscando jogo: "${jogoNome}"`);
 
       let jogoInfo = await searchGameOnSteam(jogoNome);
       if (!jogoInfo) {
         const appidMatch = jogoNome.match(/^\d+$/);
         if (appidMatch) {
           const details = await getGameDetails(parseInt(appidMatch[0]));
-          if (details) {
-            jogoInfo = {
-              appid: parseInt(appidMatch[0]),
-              nome: details.name,
-              link: `https://store.steampowered.com/app/${appidMatch[0]}`,
-              capa: details.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appidMatch[0]}/header.jpg`
-            };
-          }
+          if (details) jogoInfo = { appid: parseInt(appidMatch[0]), nome: details.name, link: `https://store.steampowered.com/app/${appidMatch[0]}`, capa: details.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appidMatch[0]}/header.jpg` };
         }
       }
-
-      if (!jogoInfo) {
-        await message.reply(`❌ Não encontrei o jogo **${jogoNome}** na Steam. Tente com o nome exato ou link da loja.`);
-        return;
-      }
-
-      const appid = jogoInfo.appid;
-      const nome = jogoInfo.nome;
-      const link = jogoInfo.link;
-
+      if (!jogoInfo) { await message.reply(`❌ Não encontrei o jogo **${jogoNome}** na Steam.`); return; }
+      const appid = jogoInfo.appid, nome = jogoInfo.nome, link = jogoInfo.link;
       const compat = await verificarCompatibilidadeFamilia(appid);
-      if (!compat.compatível) {
-        await message.reply(`⚠️ **${nome}** não é compatível com Family Sharing.\nMotivo: ${compat.motivo}`);
-        return;
-      }
-
+      if (!compat.compatível) { await message.reply(`⚠️ **${nome}** não é compatível com Family Sharing.\nMotivo: ${compat.motivo}`); return; }
       let donos = [];
-      for (const sid of STEAM_IDS_ARRAY) {
-        if ((db.historicoJogos[sid] || []).includes(appid)) {
-          const member = MEMBROS[sid];
-          if (member) donos.push(member.nome);
-        }
-      }
-
-      if (donos.length > 0) {
-        await message.reply(`✅ **${nome}** está na biblioteca da família!\n👥 Dono(s): ${donos.join(', ')}\n🔗 ${link}`);
-      } else {
-        await message.reply(`❌ **${nome}** NÃO está na biblioteca da família.`);
-      }
-    } catch (error) {
-      console.error(`❌ Erro ao processar DM:`, error);
-      await message.reply('❌ Ocorreu um erro ao processar sua mensagem. Tente novamente mais tarde.');
-    }
+      for (const sid of STEAM_IDS_ARRAY) if ((db.historicoJogos[sid] || []).includes(appid)) { const member = MEMBROS[sid]; if (member) donos.push(member.nome); }
+      if (donos.length > 0) await message.reply(`✅ **${nome}** está na biblioteca da família!\n👥 Dono(s): ${donos.join(', ')}\n🔗 ${link}`);
+      else await message.reply(`❌ **${nome}** NÃO está na biblioteca da família.`);
+    } catch (error) { console.error('❌ Erro ao processar DM:', error); await message.reply('❌ Ocorreu um erro. Tente novamente.'); }
     return;
   }
 
   // --- COMANDOS DE TEXTO DO DONO ---
   if (message.author.id !== DONO_ID) return;
-
   if (message.content === '!resetconquistas') {
     const qtd = Object.keys(db.jogosSemConquistas || {}).length;
     db.jogosSemConquistas = {};
     await salvarDBNoCanal();
     await message.reply(`✅ Resetado! ${qtd} jogos serão reverificados.`);
   }
-
   if (message.content === '!resetranking') {
     await message.reply('⚠️ Tem certeza? Digite `!confirmar` em 30s.');
     const collector = message.channel.createMessageCollector({ filter: m => m.author.id === DONO_ID && m.content === '!confirmar', max: 1, time: 30000 });
