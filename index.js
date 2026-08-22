@@ -300,7 +300,7 @@ async function saveWishlistLink(discordId, link) {
 }
 
 // ============================================================
-// 6. FUNÇÕES DA STEAM API (COM LOGS DE ERRO REDUZIDOS)
+// 6. FUNÇÕES DA STEAM API (COM LOGS DE ERRO REDUZIDOS E SUPORTE A 403/400)
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -315,10 +315,12 @@ async function fetchSteam(url, params = {}, retries = 3) {
       if (resp.status === 429) { await new Promise(r => setTimeout(r, 2000 * (i + 1))); continue; }
       return resp.data;
     } catch (e) {
-      if (e.response?.status === 429) { await new Promise(r => setTimeout(r, 5000 * (i + 1))); continue; }
+      const status = e.response?.status;
+      if (status === 429) { await new Promise(r => setTimeout(r, 5000 * (i + 1))); continue; }
       if (i === retries - 1) {
-        // Log resumido para evitar poluição
-        console.error(`⚠️ Erro na Steam API (${url.split('/').pop()}): ${e.response?.status || e.message}`);
+        if (status !== 403 && status !== 400) {
+          console.error(`⚠️ Erro na Steam API (${url.split('/').pop()}): ${status || e.message}`);
+        }
         throw e;
       }
       await new Promise(r => setTimeout(r, 2000 * (i + 1)));
@@ -384,7 +386,7 @@ async function getSteamWishlistFromLink(link) {
   return [];
 }
 
-// --- CONQUISTAS COM PORCENTAGEM ---
+// --- CONQUISTAS COM PORCENTAGEM (TRATA 403/400 SILENCIOSAMENTE) ---
 async function getPlayerAchievementsWithPercent(steamId, appId) {
   try {
     const playerData = await fetchSteam('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/', { steamid: steamId, appid: appId, format: 'json' });
@@ -397,8 +399,13 @@ async function getPlayerAchievementsWithPercent(steamId, appId) {
     const achievements = playerData.playerstats.achievements.map(a => ({ ...a, percent: global[a.apiname] || 0 }));
     return { achievements, gameName: playerData.playerstats.gameName || `Jogo ${appId}` };
   } catch (e) {
-    console.error(`⚠️ Erro ao buscar conquistas para ${appId}: ${e.response?.status || e.message}`);
-    return null;
+    const status = e.response?.status;
+    if (status === 403 || status === 400) {
+      // Jogo sem conquistas públicas ou sem permissão – retorna null para marcar como sem conquistas
+      return null;
+    }
+    console.error(`⚠️ Erro ao buscar conquistas para ${appId}: ${status || e.message}`);
+    throw e;
   }
 }
 
@@ -585,10 +592,21 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
     } catch (_) {}
     let conquistasData;
     try { conquistasData = await getPlayerAchievementsWithPercent(steamId, appid); } catch (e) {
-      if (e?.response?.status === 400) { if (!db.jogosSemConquistas) db.jogosSemConquistas = {}; db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' }; agendarSalvarDB(); continue; }
+      if (e?.response?.status === 400 || e?.response?.status === 403) {
+        // Jogo sem conquistas – marca e continua
+        if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+        db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' };
+        agendarSalvarDB();
+        continue;
+      }
       continue;
     }
-    if (!conquistasData?.achievements?.length) { if (!db.jogosSemConquistas) db.jogosSemConquistas = {}; db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' }; agendarSalvarDB(); continue; }
+    if (!conquistasData?.achievements?.length) {
+      if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
+      db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' };
+      agendarSalvarDB();
+      continue;
+    }
     const desbloqueadas = conquistasData.achievements.filter(c => c.achieved === 1);
     const total = desbloqueadas.length, totalJogo = conquistasData.achievements.length;
     if (!db.conquistas[steamId][appid]) {
