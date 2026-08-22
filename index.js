@@ -29,8 +29,8 @@ if (!DISCORD_TOKEN || !STEAM_KEY || !STEAM_IDS || !CHANNEL_ID || !QUERO_CHANNEL_
   console.error('❌ Variáveis obrigatórias ausentes.');
   process.exit(1);
 }
-if (!YOUTUBE_API_KEY) console.warn('⚠️ YOUTUBE_API_KEY não definida. Busca de vídeos não funcionará.');
-if (!ACHIEVEMENT_CHANNEL_ID) console.warn('⚠️ ACHIEVEMENT_CHANNEL_ID não definida. Conquistas não serão notificadas.');
+if (!YOUTUBE_API_KEY) console.warn('⚠️ YOUTUBE_API_KEY não definida.');
+if (!ACHIEVEMENT_CHANNEL_ID) console.warn('⚠️ ACHIEVEMENT_CHANNEL_ID não definida.');
 
 const STEAM_IDS_ARRAY = STEAM_IDS.split(',').map(id => id.trim());
 const QUERO_CHANNEL = QUERO_CHANNEL_ID;
@@ -120,7 +120,7 @@ async function carregarDBDoCanal() {
       const response = await axios.get(dbMsg.attachments.first().url, { responseType: 'json' });
       return response.data;
     }
-  } catch (e) { console.error('❌ Erro ao carregar banco:', e); }
+  } catch (e) { console.error('❌ Erro ao carregar banco:', e.message); }
   return null;
 }
 
@@ -150,7 +150,7 @@ async function salvarDBNoCanal() {
       }
     }
     return true;
-  } catch (e) { console.error('❌ Erro ao salvar banco:', e); return false; }
+  } catch (e) { console.error('❌ Erro ao salvar banco:', e.message); return false; }
 }
 
 async function inicializarDB() {
@@ -191,7 +191,7 @@ async function carregarVideoCache() {
       videoCache = response.data;
     }
     videoCache = videoCache || {};
-  } catch (e) { videoCache = {}; console.error('❌ Erro ao carregar cache de vídeos:', e); }
+  } catch (e) { videoCache = {}; console.error('❌ Erro ao carregar cache de vídeos:', e.message); }
 }
 
 async function salvarVideoCache() {
@@ -210,7 +210,7 @@ async function salvarVideoCache() {
     const nova = await channel.send({ content: 'VIDEO_CACHE', files: [attach] });
     videoCacheMessageId = nova.id;
     return true;
-  } catch (e) { console.error('❌ Erro ao salvar cache de vídeos:', e); return false; }
+  } catch (e) { console.error('❌ Erro ao salvar cache de vídeos:', e.message); return false; }
 }
 
 async function getVideoFromCache(jogo, conquista) {
@@ -220,7 +220,7 @@ async function getVideoFromCache(jogo, conquista) {
 async function saveVideoToCache(jogo, conquista, info) {
   const key = `${jogo}|${conquista}`.toLowerCase();
   videoCache[key] = info;
-  salvarVideoCache().catch(e => console.error('❌ Erro ao salvar cache:', e));
+  salvarVideoCache().catch(e => console.error('❌ Erro ao salvar cache:', e.message));
 }
 
 // ============================================================
@@ -300,7 +300,7 @@ async function saveWishlistLink(discordId, link) {
 }
 
 // ============================================================
-// 6. FUNÇÕES DA STEAM API (COM LOGS REDUZIDOS)
+// 6. FUNÇÕES DA STEAM API (COM LOGS DE ERRO REDUZIDOS)
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -316,7 +316,11 @@ async function fetchSteam(url, params = {}, retries = 3) {
       return resp.data;
     } catch (e) {
       if (e.response?.status === 429) { await new Promise(r => setTimeout(r, 5000 * (i + 1))); continue; }
-      if (i === retries - 1) throw e;
+      if (i === retries - 1) {
+        // Log resumido para evitar poluição
+        console.error(`⚠️ Erro na Steam API (${url.split('/').pop()}): ${e.response?.status || e.message}`);
+        throw e;
+      }
       await new Promise(r => setTimeout(r, 2000 * (i + 1)));
     }
   }
@@ -350,7 +354,7 @@ async function getCurrentGame(steamId) {
     const data = await fetchSteam('https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/', { steamids: steamId }, 2);
     const player = data?.response?.players?.[0];
     if (player?.gameid) return { appid: parseInt(player.gameid), name: player.gameextrainfo || `Jogo ${player.gameid}` };
-  } catch (e) {}
+  } catch (_) {}
   return null;
 }
 
@@ -361,7 +365,7 @@ async function getSteamWishlist(steamId) {
     const resp = await axios.get(url, { params: { l: 'portuguese', v: '1' }, timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!resp.data || typeof resp.data !== 'object' || !Object.keys(resp.data).length) return [];
     return Object.entries(resp.data).filter(([_, d]) => d && d.name).map(([appid, d]) => ({ appid: parseInt(appid), nome: d.name, link: `https://store.steampowered.com/app/${appid}` }));
-  } catch (e) { return []; }
+  } catch (_) { return []; }
 }
 async function resolveVanityUrl(vanityName) {
   try {
@@ -392,7 +396,10 @@ async function getPlayerAchievementsWithPercent(steamId, appId) {
     } catch (_) {}
     const achievements = playerData.playerstats.achievements.map(a => ({ ...a, percent: global[a.apiname] || 0 }));
     return { achievements, gameName: playerData.playerstats.gameName || `Jogo ${appId}` };
-  } catch (e) { return null; }
+  } catch (e) {
+    console.error(`⚠️ Erro ao buscar conquistas para ${appId}: ${e.response?.status || e.message}`);
+    return null;
+  }
 }
 
 // --- CACHES DE NOMES ---
@@ -554,7 +561,7 @@ async function verificarEEnviarRegras() {
     db.regrasEnviadas = true;
     await salvarDBNoCanal();
   } catch (error) {
-    console.error('❌ Erro ao verificar/enviar regras:', error);
+    console.error('❌ Erro ao verificar/enviar regras:', error.message);
   }
 }
 
@@ -578,7 +585,7 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
     } catch (_) {}
     let conquistasData;
     try { conquistasData = await getPlayerAchievementsWithPercent(steamId, appid); } catch (e) {
-      if (e.response?.status === 400) { if (!db.jogosSemConquistas) db.jogosSemConquistas = {}; db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' }; agendarSalvarDB(); continue; }
+      if (e?.response?.status === 400) { if (!db.jogosSemConquistas) db.jogosSemConquistas = {}; db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' }; agendarSalvarDB(); continue; }
       continue;
     }
     if (!conquistasData?.achievements?.length) { if (!db.jogosSemConquistas) db.jogosSemConquistas = {}; db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' }; agendarSalvarDB(); continue; }
@@ -641,7 +648,13 @@ async function checkAchievements() {
       const userName = member.nome;
       let limit = 12;
       if (userName === 'Gardemi') limit = 6;
-      const recentGames = await getRecentlyPlayedGames(steamId, limit);
+      let recentGames = [];
+      try {
+        recentGames = await getRecentlyPlayedGames(steamId, limit);
+      } catch (e) {
+        // erro já logado internamente, apenas pula esse membro
+        continue;
+      }
       if (!recentGames?.length) continue;
       const unique = [], seen = new Set();
       for (const g of recentGames) if (!seen.has(g.appid)) { seen.add(g.appid); unique.push(g); }
@@ -665,7 +678,7 @@ async function checkAchievements() {
       agendarSalvarDB();
     }
   } catch (e) {
-    console.error('❌ Erro em checkAchievements:', e);
+    console.error('❌ Erro em checkAchievements:', e.message);
   } finally {
     isCheckingAchievementsLock = false;
   }
@@ -727,7 +740,7 @@ async function checkNewGames() {
       }
     }
   } catch (e) {
-    console.error('❌ Erro em checkNewGames:', e);
+    console.error('❌ Erro em checkNewGames:', e.message);
   } finally {
     isCheckingNewGames = false;
   }
@@ -882,7 +895,7 @@ async function buscarVideoYouTube(nomeJogo, nomeConquista) {
 // 12. CLIENT DISCORD
 // ============================================================
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-client.on('error', (e) => console.error('❌ [ERROR]', e));
+client.on('error', (e) => console.error('❌ [ERROR]', e.message));
 
 // ============================================================
 // 13. READY
@@ -919,7 +932,7 @@ client.once('clientReady', async () => {
     const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
     console.log('✅ Comandos registrados.');
-  } catch (err) { console.error('❌ Erro ao registrar comandos:', err); }
+  } catch (err) { console.error('❌ Erro ao registrar comandos:', err.message); }
 
   await verificarEEnviarRegras();
 
@@ -963,7 +976,7 @@ client.on('interactionCreate', async (interaction) => {
       recentGames = games.map(g => ({ appid: g.appid, name: g.name || `App ${g.appid}` }));
       recentGamesCache.set(cacheKey, { data: recentGames, timestamp: now });
     } catch (e) {
-      console.error('❌ Erro ao buscar jogos recentes para autocomplete:', e);
+      console.error('❌ Erro ao buscar jogos recentes:', e.message);
       await interaction.respond([]);
       return;
     }
@@ -1326,7 +1339,7 @@ client.on('interactionCreate', async (interaction) => {
             await i.followUp({ content: `❌ Nenhum vídeo encontrado para "${data.conquista}".`, flags: MessageFlags.Ephemeral });
           }
         } catch (error) {
-          console.error('❌ Erro no botão de vídeo:', error);
+          console.error('❌ Erro no botão de vídeo:', error.message);
         }
         return;
       }
@@ -1339,7 +1352,7 @@ client.on('interactionCreate', async (interaction) => {
           const { embed, buttons } = await generateAchievementEmbed(ach, idx);
           await i.editReply({ embeds: [embed], components: [buttons] });
         } catch (error) {
-          console.error('❌ Erro no select:', error);
+          console.error('❌ Erro no select:', error.message);
         }
         return;
       }
@@ -1356,7 +1369,7 @@ client.on('interactionCreate', async (interaction) => {
             .setTimestamp();
           await i.editReply({ embeds: [embed], components: [generateSelectMenu(currentPage), generatePaginationButtons(currentPage)] });
         } catch (error) {
-          console.error('❌ Erro ao voltar:', error);
+          console.error('❌ Erro ao voltar:', error.message);
         }
         return;
       }
@@ -1376,7 +1389,7 @@ client.on('interactionCreate', async (interaction) => {
             .setTimestamp();
           await i.editReply({ embeds: [embed], components: [generateSelectMenu(currentPage), generatePaginationButtons(currentPage)] });
         } catch (error) {
-          console.error('❌ Erro na paginação:', error);
+          console.error('❌ Erro na paginação:', error.message);
         }
         return;
       }
@@ -1424,7 +1437,7 @@ client.on('messageCreate', async (message) => {
       for (const sid of STEAM_IDS_ARRAY) if ((db.historicoJogos[sid] || []).includes(appid)) { const member = MEMBROS[sid]; if (member) donos.push(member.nome); }
       if (donos.length > 0) await message.reply(`✅ **${nome}** está na biblioteca da família!\n👥 Dono(s): ${donos.join(', ')}\n🔗 ${link}`);
       else await message.reply(`❌ **${nome}** NÃO está na biblioteca da família.`);
-    } catch (error) { console.error('❌ Erro ao processar DM:', error); await message.reply('❌ Ocorreu um erro. Tente novamente.'); }
+    } catch (error) { console.error('❌ Erro ao processar DM:', error.message); await message.reply('❌ Ocorreu um erro. Tente novamente.'); }
     return;
   }
 
