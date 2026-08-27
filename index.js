@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA (12 JOGOS)
+// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA (12 JOGOS) + IA GROQ
 // ============================================================
 
 console.log('========================================');
@@ -16,6 +16,79 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags } = require('discord.js');
+
+// ============================================================
+// 0. INICIALIZAÇÃO DA IA (GROQ)
+// ============================================================
+let groqClient = null;
+if (process.env.GROQ_API_KEY) {
+  try {
+    const Groq = require('groq-sdk');
+    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    console.log('✅ Groq AI inicializado com sucesso!');
+  } catch (e) {
+    console.warn('⚠️ Erro ao inicializar Groq:', e.message);
+  }
+} else {
+  console.warn('⚠️ GROQ_API_KEY não definida. IA não funcionará.');
+}
+
+// Memória por usuário para contexto (últimas mensagens)
+const userMemory = new Map();
+
+// Função que chama a Groq e retorna a resposta
+async function getGroqResponse(userMessage, userName) {
+  if (!groqClient) return null;
+
+  try {
+    if (!userMemory.has(userName)) {
+      userMemory.set(userName, []);
+    }
+    const history = userMemory.get(userName);
+
+    // Adiciona a nova mensagem
+    history.push({ role: 'user', content: userMessage });
+
+    // Mantém apenas as últimas 10 mensagens
+    if (history.length > 10) {
+      userMemory.set(userName, history.slice(-10));
+    }
+
+    const messages = [
+      {
+        role: 'system',
+        content: `Você é um assistente do servidor Steam Família no Discord.
+          Você conhece a lista de membros: ${Object.values(MEMBROS).map(m => m.nome).join(', ')}.
+          Você tem acesso ao ranking de jogos (use o comando /ranking para ver).
+          Você tem acesso à lista de jogos da biblioteca da família.
+          Responda de forma amigável, em português, e seja direto.
+          Se não souber algo, diga que não sabe e sugere usar um comando como /tem ou /ranking.`
+      },
+      ...history
+    ];
+
+    const completion = await groqClient.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: messages,
+      temperature: 0.7,
+      max_tokens: 500,
+    });
+
+    const resposta = completion.choices[0]?.message?.content || 'Desculpe, não consegui processar sua pergunta.';
+    history.push({ role: 'assistant', content: resposta });
+    userMemory.set(userName, history);
+    return resposta;
+  } catch (error) {
+    console.error('❌ Erro na Groq:', error.message);
+    return null;
+  }
+}
+
+// Limpeza da memória a cada hora
+setInterval(() => {
+  userMemory.clear();
+  console.log('🧹 Memória da IA limpa.');
+}, 3600000);
 
 // ============================================================
 // 1. VARIÁVEIS DE AMBIENTE
@@ -1417,12 +1490,12 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 16. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO
+// 16. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // --- RESPOSTAS AUTOMÁTICAS EM DM ---
+  // --- RESPOSTAS AUTOMÁTICAS EM DM (sem IA) ---
   if (!message.guild) {
     try {
       const content = message.content.toLowerCase().trim();
@@ -1460,24 +1533,92 @@ client.on('messageCreate', async (message) => {
   }
 
   // --- COMANDOS DE TEXTO DO DONO ---
-  if (message.author.id !== DONO_ID) return;
-  if (message.content === '!resetconquistas') {
-    const qtd = Object.keys(db.jogosSemConquistas || {}).length;
-    db.jogosSemConquistas = {};
-    agendarSalvarDB();
-    await message.reply(`✅ Resetado! ${qtd} jogos serão reverificados.`);
+  if (message.author.id === DONO_ID) {
+    if (message.content === '!resetconquistas') {
+      const qtd = Object.keys(db.jogosSemConquistas || {}).length;
+      db.jogosSemConquistas = {};
+      agendarSalvarDB();
+      await message.reply(`✅ Resetado! ${qtd} jogos serão reverificados.`);
+      return;
+    }
+    if (message.content === '!resetranking') {
+      await message.reply('⚠️ Tem certeza? Digite `!confirmar` em 30s.');
+      const collector = message.channel.createMessageCollector({ filter: m => m.author.id === DONO_ID && m.content === '!confirmar', max: 1, time: 30000 });
+      collector.on('collect', async () => {
+        for (const sid of STEAM_IDS_ARRAY) if (db.ranking[sid]) db.ranking[sid].jogos = 0;
+        db.rankingVersion = RANKING_VERSION;
+        await salvarDBNoCanal();
+        await enviarRanking();
+        await message.reply('✅ Ranking resetado.');
+      });
+      collector.on('end', collected => { if (!collected.size) message.reply('⏰ Cancelado.'); });
+      return;
+    }
   }
-  if (message.content === '!resetranking') {
-    await message.reply('⚠️ Tem certeza? Digite `!confirmar` em 30s.');
-    const collector = message.channel.createMessageCollector({ filter: m => m.author.id === DONO_ID && m.content === '!confirmar', max: 1, time: 30000 });
-    collector.on('collect', async () => {
-      for (const sid of STEAM_IDS_ARRAY) if (db.ranking[sid]) db.ranking[sid].jogos = 0;
-      db.rankingVersion = RANKING_VERSION;
-      await salvarDBNoCanal();
-      await enviarRanking();
-      await message.reply('✅ Ranking resetado.');
-    });
-    collector.on('end', collected => { if (!collected.size) message.reply('⏰ Cancelado.'); });
+
+  // --- IA: RESPOSTA A MENÇÕES ---
+  const botMentioned = message.mentions.has(client.user);
+  if (!botMentioned) return;
+
+  // Remove a menção do bot e outros @
+  let pergunta = message.content.replace(/<@!?\d+>/g, '').replace(/@(everyone|here)/g, '').trim();
+  if (!pergunta) {
+    await message.reply('👋 Oi! Me pergunte algo! Ex: "Quem está em primeiro no ranking?"');
+    return;
+  }
+
+  // Mostra no console que foi acionado
+  console.log(`🤖 [IA] ${message.author.username} perguntou: "${pergunta}"`);
+
+  // Envia indicador de digitação
+  await message.channel.sendTyping();
+
+  // Tenta resposta da IA
+  let resposta = await getGroqResponse(pergunta, message.author.username);
+
+  // Fallback caso a IA não responda
+  if (!resposta) {
+    const perguntaLower = pergunta.toLowerCase();
+    if (perguntaLower.includes('ranking') || perguntaLower.includes('primeiro') || perguntaLower.includes('quem está na frente')) {
+      const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
+      if (rankingArray.length > 0) {
+        const primeiro = rankingArray[0];
+        resposta = `🏆 **${primeiro.nome}** está em primeiro no ranking com **${primeiro.jogos} jogos**!`;
+      } else {
+        resposta = '📊 Ainda não tenho dados de ranking.';
+      }
+    } else if (perguntaLower.includes('tem') || perguntaLower.includes('jogo') || perguntaLower.includes('possui')) {
+      // Tenta extrair um nome de jogo
+      const palavras = pergunta.split(' ');
+      let encontrado = false;
+      for (const palavra of palavras) {
+        if (palavra.length > 3) {
+          for (const [sid, jogos] of Object.entries(db.historicoJogos || {})) {
+            const member = MEMBROS[sid];
+            if (member && jogos && jogos.some(j => j.toString() === palavra)) {
+              resposta = `✅ **${palavra}** está na biblioteca da família (dono: ${member.nome})!`;
+              encontrado = true;
+              break;
+            }
+          }
+          if (encontrado) break;
+        }
+      }
+      if (!resposta) {
+        resposta = `❓ Não sei se temos **${pergunta}** na biblioteca. Use \`/tem "nome do jogo"\` para verificar.`;
+      }
+    } else {
+      resposta = `❓ Não entendi sua pergunta. Tente perguntar sobre o ranking, jogos disponíveis, ou use \`/tem\` e \`/ranking\`.`;
+    }
+  }
+
+  // Limita o tamanho
+  if (resposta && resposta.length > 1900) resposta = resposta.substring(0, 1900) + '...';
+
+  if (resposta) {
+    await message.reply(resposta);
+  } else {
+    await message.reply('❌ Desculpe, estou com problemas no momento. Tente novamente mais tarde.');
   }
 });
 
