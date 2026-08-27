@@ -46,15 +46,12 @@ async function getGroqResponse(userMessage, userName, contextData = null) {
     }
     const history = userMemory.get(userName);
 
-    // Adiciona a nova mensagem
     history.push({ role: 'user', content: userMessage });
 
-    // Mantém apenas as últimas 10 mensagens
     if (history.length > 10) {
       userMemory.set(userName, history.slice(-10));
     }
 
-    // Monta o sistema com contexto adicional
     let systemContent = `Você é um assistente do servidor Steam Família no Discord.
       Você conhece a lista de membros: ${Object.values(MEMBROS).map(m => m.nome).join(', ')}.
       Você tem acesso ao ranking de jogos (use o comando /ranking para ver).
@@ -62,7 +59,6 @@ async function getGroqResponse(userMessage, userName, contextData = null) {
       Responda de forma amigável, em português, e seja direto.
       Se não souber algo, diga que não sabe e sugere usar um comando como /tem ou /ranking.`;
 
-    // Se houver contexto extra (ex: informações sobre um jogo), adiciona
     if (contextData) {
       systemContent += `\n\nInformações adicionais fornecidas pelo bot (dados verificados):\n${contextData}`;
     }
@@ -72,7 +68,7 @@ async function getGroqResponse(userMessage, userName, contextData = null) {
       ...history
     ];
 
-    // ✅ MODELO ATIVO E GRATUITO (llama-3.1-8b-instant)
+    // ✅ MODELO ATIVO E GRATUITO
     const completion = await groqClient.chat.completions.create({
       model: 'llama-3.1-8b-instant',
       messages: messages,
@@ -379,7 +375,7 @@ async function saveWishlistLink(discordId, link) {
 }
 
 // ============================================================
-// 6. FUNÇÕES DA STEAM API (COM LOGS DE ERRO REDUZIDOS E SUPORTE A 403/400)
+// 6. FUNÇÕES DA STEAM API
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
@@ -465,7 +461,7 @@ async function getSteamWishlistFromLink(link) {
   return [];
 }
 
-// --- CONQUISTAS COM PORCENTAGEM (TRATA 403/400 SILENCIOSAMENTE) ---
+// --- CONQUISTAS COM PORCENTAGEM ---
 async function getPlayerAchievementsWithPercent(steamId, appId) {
   try {
     const playerData = await fetchSteam('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/', { steamid: steamId, appid: appId, format: 'json' });
@@ -479,10 +475,7 @@ async function getPlayerAchievementsWithPercent(steamId, appId) {
     return { achievements, gameName: playerData.playerstats.gameName || `Jogo ${appId}` };
   } catch (e) {
     const status = e.response?.status;
-    if (status === 403 || status === 400) {
-      // Jogo sem conquistas públicas ou sem permissão – retorna null para marcar como sem conquistas
-      return null;
-    }
+    if (status === 403 || status === 400) return null;
     console.error(`⚠️ Erro ao buscar conquistas para ${appId}: ${status || e.message}`);
     throw e;
   }
@@ -672,7 +665,6 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
     let conquistasData;
     try { conquistasData = await getPlayerAchievementsWithPercent(steamId, appid); } catch (e) {
       if (e?.response?.status === 400 || e?.response?.status === 403) {
-        // Jogo sem conquistas – marca e continua
         if (!db.jogosSemConquistas) db.jogosSemConquistas = {};
         db.jogosSemConquistas[appid] = { nome: gameName, data: new Date().toISOString(), motivo: 'sem_conquistas' };
         agendarSalvarDB();
@@ -730,7 +722,7 @@ async function verificarConquistas(steamId, gamesToCheck, mention, userName) {
 }
 
 // ============================================================
-// 10. VERIFICAÇÕES PERIÓDICAS (COM LOGS REDUZIDOS)
+// 10. VERIFICAÇÕES PERIÓDICAS
 // ============================================================
 let isCheckingNewGames = false;
 let isCheckingAchievementsLock = false;
@@ -749,7 +741,6 @@ async function checkAchievements() {
       try {
         recentGames = await getRecentlyPlayedGames(steamId, limit);
       } catch (e) {
-        // erro já logado internamente, apenas pula esse membro
         continue;
       }
       if (!recentGames?.length) continue;
@@ -992,10 +983,8 @@ async function buscarVideoYouTube(nomeJogo, nomeConquista) {
 // 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME
 // ============================================================
 async function verificarJogoNaFamilia(nomeJogo) {
-  // Busca na Steam
   let jogoInfo = await searchGameOnSteam(nomeJogo);
   if (!jogoInfo) {
-    // Se não encontrar, tenta com o ID (caso seja um número)
     const appidMatch = nomeJogo.match(/^\d+$/);
     if (appidMatch) {
       const details = await getGameDetails(parseInt(appidMatch[0]));
@@ -1613,15 +1602,14 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // --- IA: RESPOSTA A MENÇÕES (COM CONTEXTO) ---
+  // --- IA: RESPOSTA A MENÇÕES (COM CONTEXTO E EXTRAÇÃO CORRIGIDA) ---
   const botMentioned = message.mentions.has(client.user);
   if (!botMentioned) return;
 
-  // Remove a menção do bot de forma mais robusta
   let pergunta = message.content
-    .replace(/<@!?\d+>/g, '')           // Remove menções do tipo <@!123> ou <@123>
-    .replace(/@(everyone|here)/g, '')    // Remove @everyone e @here
-    .replace(/@\S+/g, '')                // Remove qualquer @isolado (caso sobre)
+    .replace(/<@!?\d+>/g, '')
+    .replace(/@(everyone|here)/g, '')
+    .replace(/@\S+/g, '')
     .trim();
 
   if (!pergunta) {
@@ -1631,26 +1619,21 @@ client.on('messageCreate', async (message) => {
 
   console.log(`🤖 [IA] ${message.author.username} perguntou: "${pergunta}"`);
 
-  // Envia indicador de digitação
   await message.channel.sendTyping();
 
-  // --- DETECTA SE A PERGUNTA É SOBRE UM JOGO E BUSCA DADOS ---
   let contextoIA = null;
   const perguntaLower = pergunta.toLowerCase();
   const palavrasChave = ['tem', 'jogo', 'possui', 'vc tem', 'você tem', 'alguém tem', 'a gente tem', 'temos'];
 
-  // Verifica se a pergunta contém alguma palavra-chave
   const contemPalavraChave = palavrasChave.some(p => perguntaLower.includes(p));
   if (contemPalavraChave) {
-    // Tenta extrair o nome do jogo
     let jogoNome = null;
 
-    // 1. Tenta capturar o que vem depois de palavras-chave
+    // Tenta capturar o que vem depois de palavras-chave
     const match = perguntaLower.match(/(?:tem|jogo|possui|vc tem|você tem|alguém tem|a gente tem|temos)\s+(.+)/i);
     if (match) {
       jogoNome = match[1].trim();
     } else {
-      // 2. Se falhar, remove palavras comuns e pega o restante
       const palavrasComuns = ['tem', 'o', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot', 'sobre', 'qual', 'é', 'de', 'para', 'com', 'por', 'um', 'uma'];
       let palavras = pergunta.split(' ');
       palavras = palavras.filter(p => p.length > 2 && !palavrasComuns.includes(p.toLowerCase()));
@@ -1659,10 +1642,10 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // 3. Remove "na familia", "na steam", etc. do final
+    // 🔥 CORREÇÃO: remove TODAS as combinações de sufixos
     if (jogoNome) {
       jogoNome = jogoNome
-        .replace(/\s*(na\s+familia|na\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
+        .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
         .replace(/[?.,!]/g, '')
         .trim();
       console.log(`🔍 [CONTEXTO] Nome extraído: "${jogoNome}"`);
@@ -1684,12 +1667,9 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Tenta resposta da IA (passando o contexto se tiver)
   let resposta = await getGroqResponse(pergunta, message.author.username, contextoIA);
 
-  // Fallback caso a IA não responda
   if (!resposta) {
-    // Perguntas sobre ranking
     if (perguntaLower.includes('ranking') || perguntaLower.includes('primeiro') || perguntaLower.includes('quem está na frente')) {
       const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
       if (rankingArray.length > 0) {
@@ -1698,18 +1678,13 @@ client.on('messageCreate', async (message) => {
       } else {
         resposta = '📊 Ainda não tenho dados de ranking.';
       }
-    }
-    // Se já temos contexto, usa ele no fallback
-    else if (contextoIA) {
+    } else if (contextoIA) {
       resposta = contextoIA;
-    }
-    // Outras perguntas
-    else {
+    } else {
       resposta = `❓ Não entendi sua pergunta. Tente perguntar sobre o ranking, jogos disponíveis, ou use \`/tem\` e \`/ranking\`.`;
     }
   }
 
-  // Limita o tamanho
   if (resposta && resposta.length > 1900) resposta = resposta.substring(0, 1900) + '...';
 
   if (resposta) {
