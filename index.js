@@ -68,9 +68,9 @@ async function getGroqResponse(userMessage, userName, contextData = null) {
       ...history
     ];
 
-    // ✅ MODELO ATIVO E GRATUITO
+    // ✅ MODELO ATIVO E GRATUITO (Mixtral)
     const completion = await groqClient.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
+      model: 'mixtral-8x7b-32768',
       messages: messages,
       temperature: 0.7,
       max_tokens: 500,
