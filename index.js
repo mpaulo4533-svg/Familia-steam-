@@ -18,7 +18,7 @@ const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags } = require('discord.js');
 
 // ============================================================
-// 0. INICIALIZAÇÃO DA IA (GROQ) - MODELO CORRIGIDO
+// 0. INICIALIZAÇÃO DA IA (GROQ) - MODELO ATIVO
 // ============================================================
 let groqClient = null;
 if (process.env.GROQ_API_KEY) {
@@ -68,9 +68,9 @@ async function getGroqResponse(userMessage, userName, contextData = null) {
       ...history
     ];
 
-    // ✅ MODELO ATIVO E GRATUITO (Mixtral)
+    // ✅ MODELO ATIVO E RECOMENDADO (Llama 3.3 70B)
     const completion = await groqClient.chat.completions.create({
-      model: 'mixtral-8x7b-32768',
+      model: 'llama-3.3-70b-versatile',
       messages: messages,
       temperature: 0.7,
       max_tokens: 500,
