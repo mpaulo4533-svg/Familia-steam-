@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO OTIMIZADA (12 JOGOS) + IA GROQ
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ
 // ============================================================
 
 console.log('========================================');
@@ -983,13 +983,57 @@ async function buscarVideoYouTube(nomeJogo, nomeConquista) {
 }
 
 // ============================================================
-// 12. CLIENT DISCORD
+// 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME
+// ============================================================
+async function verificarJogoNaFamilia(nomeJogo) {
+  let jogoInfo = await searchGameOnSteam(nomeJogo);
+  if (!jogoInfo) {
+    const appidMatch = nomeJogo.match(/^\d+$/);
+    if (appidMatch) {
+      const details = await getGameDetails(parseInt(appidMatch[0]));
+      if (details) {
+        jogoInfo = {
+          appid: parseInt(appidMatch[0]),
+          nome: details.name,
+          link: `https://store.steampowered.com/app/${appidMatch[0]}`
+        };
+      }
+    }
+  }
+  if (!jogoInfo) return null;
+
+  const compat = await verificarCompatibilidadeFamilia(jogoInfo.appid);
+  if (!compat.compatível) {
+    return {
+      encontrado: false,
+      motivo: `⚠️ **${jogoInfo.nome}** não é compatível com Family Sharing.\nMotivo: ${compat.motivo}`
+    };
+  }
+
+  let donos = [];
+  for (const sid of STEAM_IDS_ARRAY) {
+    if ((db.historicoJogos[sid] || []).includes(jogoInfo.appid)) {
+      const member = MEMBROS[sid];
+      if (member) donos.push(member.nome);
+    }
+  }
+
+  return {
+    encontrado: donos.length > 0,
+    jogo: jogoInfo,
+    donos: donos,
+    link: jogoInfo.link
+  };
+}
+
+// ============================================================
+// 13. CLIENT DISCORD
 // ============================================================
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 client.on('error', (e) => console.error('❌ [ERROR]', e.message));
 
 // ============================================================
-// 13. READY
+// 14. READY
 // ============================================================
 client.once('clientReady', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -1038,7 +1082,7 @@ client.once('clientReady', async () => {
 });
 
 // ============================================================
-// 14. AUTOCOMPLETE
+// 15. AUTOCOMPLETE
 // ============================================================
 const recentGamesCache = new Map();
 const RECENT_GAMES_CACHE_TTL = 60000;
@@ -1098,7 +1142,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 15. COMANDOS SLASH
+// 16. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -1490,7 +1534,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 16. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
+// 17. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
@@ -1499,36 +1543,37 @@ client.on('messageCreate', async (message) => {
   if (!message.guild) {
     try {
       const content = message.content.toLowerCase().trim();
-      const patterns = [
+      const padroes = [
         /^(a gente tem|tem o jogo|possui o|temos o|vc tem|você tem|alguém tem|tem o|tem) (.+)/i,
         /^(a gente tem|tem o jogo|possui o|temos o|vc tem|você tem|alguém tem|tem o) (.+)\?/i,
         /^(.+)\?$/i
       ];
       let jogoNome = null;
-      for (const pattern of patterns) {
+      for (const pattern of padroes) {
         const match = content.match(pattern);
         if (match) { jogoNome = match[2] || match[1]; break; }
       }
       if (!jogoNome) return;
       jogoNome = jogoNome.trim();
 
-      let jogoInfo = await searchGameOnSteam(jogoNome);
-      if (!jogoInfo) {
-        const appidMatch = jogoNome.match(/^\d+$/);
-        if (appidMatch) {
-          const details = await getGameDetails(parseInt(appidMatch[0]));
-          if (details) jogoInfo = { appid: parseInt(appidMatch[0]), nome: details.name, link: `https://store.steampowered.com/app/${appidMatch[0]}`, capa: details.header_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${appidMatch[0]}/header.jpg` };
-        }
+      const resultado = await verificarJogoNaFamilia(jogoNome);
+      if (!resultado) {
+        await message.reply(`❌ Não encontrei o jogo **${jogoNome}** na Steam.`);
+        return;
       }
-      if (!jogoInfo) { await message.reply(`❌ Não encontrei o jogo **${jogoNome}** na Steam.`); return; }
-      const appid = jogoInfo.appid, nome = jogoInfo.nome, link = jogoInfo.link;
-      const compat = await verificarCompatibilidadeFamilia(appid);
-      if (!compat.compatível) { await message.reply(`⚠️ **${nome}** não é compatível com Family Sharing.\nMotivo: ${compat.motivo}`); return; }
-      let donos = [];
-      for (const sid of STEAM_IDS_ARRAY) if ((db.historicoJogos[sid] || []).includes(appid)) { const member = MEMBROS[sid]; if (member) donos.push(member.nome); }
-      if (donos.length > 0) await message.reply(`✅ **${nome}** está na biblioteca da família!\n👥 Dono(s): ${donos.join(', ')}\n🔗 ${link}`);
-      else await message.reply(`❌ **${nome}** NÃO está na biblioteca da família.`);
-    } catch (error) { console.error('❌ Erro ao processar DM:', error.message); await message.reply('❌ Ocorreu um erro. Tente novamente.'); }
+      if (!resultado.encontrado) {
+        if (resultado.motivo) {
+          await message.reply(resultado.motivo);
+        } else {
+          await message.reply(`❌ **${resultado.jogo.nome}** NÃO está na biblioteca da família.`);
+        }
+        return;
+      }
+      await message.reply(`✅ **${resultado.jogo.nome}** está na biblioteca da família!\n👥 Dono(s): ${resultado.donos.join(', ')}\n🔗 ${resultado.link}`);
+    } catch (error) {
+      console.error('❌ Erro ao processar DM:', error.message);
+      await message.reply('❌ Ocorreu um erro. Tente novamente.');
+    }
     return;
   }
 
@@ -1543,7 +1588,11 @@ client.on('messageCreate', async (message) => {
     }
     if (message.content === '!resetranking') {
       await message.reply('⚠️ Tem certeza? Digite `!confirmar` em 30s.');
-      const collector = message.channel.createMessageCollector({ filter: m => m.author.id === DONO_ID && m.content === '!confirmar', max: 1, time: 30000 });
+      const collector = message.channel.createMessageCollector({
+        filter: m => m.author.id === DONO_ID && m.content === '!confirmar',
+        max: 1,
+        time: 30000
+      });
       collector.on('collect', async () => {
         for (const sid of STEAM_IDS_ARRAY) if (db.ranking[sid]) db.ranking[sid].jogos = 0;
         db.rankingVersion = RANKING_VERSION;
@@ -1567,7 +1616,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Mostra no console que foi acionado
   console.log(`🤖 [IA] ${message.author.username} perguntou: "${pergunta}"`);
 
   // Envia indicador de digitação
@@ -1579,6 +1627,8 @@ client.on('messageCreate', async (message) => {
   // Fallback caso a IA não responda
   if (!resposta) {
     const perguntaLower = pergunta.toLowerCase();
+
+    // Perguntas sobre ranking
     if (perguntaLower.includes('ranking') || perguntaLower.includes('primeiro') || perguntaLower.includes('quem está na frente')) {
       const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
       if (rankingArray.length > 0) {
@@ -1587,27 +1637,47 @@ client.on('messageCreate', async (message) => {
       } else {
         resposta = '📊 Ainda não tenho dados de ranking.';
       }
-    } else if (perguntaLower.includes('tem') || perguntaLower.includes('jogo') || perguntaLower.includes('possui')) {
-      // Tenta extrair um nome de jogo
-      const palavras = pergunta.split(' ');
-      let encontrado = false;
-      for (const palavra of palavras) {
-        if (palavra.length > 3) {
-          for (const [sid, jogos] of Object.entries(db.historicoJogos || {})) {
-            const member = MEMBROS[sid];
-            if (member && jogos && jogos.some(j => j.toString() === palavra)) {
-              resposta = `✅ **${palavra}** está na biblioteca da família (dono: ${member.nome})!`;
-              encontrado = true;
-              break;
-            }
+    }
+    // Perguntas sobre jogos (tem, possui, etc.)
+    else if (perguntaLower.includes('tem') || perguntaLower.includes('jogo') || perguntaLower.includes('possui')) {
+      // Tenta extrair o nome do jogo da pergunta
+      let jogoNome = null;
+      // Remove palavras comuns
+      let limpo = pergunta.replace(/\b(tem|o|jogo|possui|vc|você|alguém|na|familia|steam|família|a gente|temos|bot)\b/gi, '').trim();
+      // Remove pontuação
+      limpo = limpo.replace(/[?.,!]/g, '').trim();
+      if (limpo.length > 1) {
+        jogoNome = limpo;
+      } else {
+        // Se não conseguiu extrair, tenta pegar a última palavra (fallback)
+        const palavras = pergunta.split(' ');
+        for (const p of palavras) {
+          if (p.length > 3 && !['tem', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot'].includes(p.toLowerCase())) {
+            jogoNome = p;
+            break;
           }
-          if (encontrado) break;
         }
       }
-      if (!resposta) {
-        resposta = `❓ Não sei se temos **${pergunta}** na biblioteca. Use \`/tem "nome do jogo"\` para verificar.`;
+
+      if (jogoNome) {
+        const resultado = await verificarJogoNaFamilia(jogoNome);
+        if (!resultado) {
+          resposta = `❌ Não encontrei o jogo **${jogoNome}** na Steam.`;
+        } else if (!resultado.encontrado) {
+          if (resultado.motivo) {
+            resposta = resultado.motivo;
+          } else {
+            resposta = `❌ **${resultado.jogo.nome}** NÃO está na biblioteca da família.`;
+          }
+        } else {
+          resposta = `✅ **${resultado.jogo.nome}** está na biblioteca da família!\n👥 Dono(s): ${resultado.donos.join(', ')}\n🔗 ${resultado.link}`;
+        }
+      } else {
+        resposta = `❓ Não entendi qual jogo você está perguntando. Tente mencionar o nome do jogo claramente.`;
       }
-    } else {
+    }
+    // Outras perguntas
+    else {
       resposta = `❓ Não entendi sua pergunta. Tente perguntar sobre o ranking, jogos disponíveis, ou use \`/tem\` e \`/ranking\`.`;
     }
   }
@@ -1623,7 +1693,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ============================================================
-// 17. HEALTH CHECK E LOGIN
+// 18. HEALTH CHECK E LOGIN
 // ============================================================
 if (process.env.PORT) {
   try {
