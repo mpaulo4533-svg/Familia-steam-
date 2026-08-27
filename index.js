@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ (CORRIGIDA)
 // ============================================================
 
 console.log('========================================');
@@ -983,11 +983,13 @@ async function buscarVideoYouTube(nomeJogo, nomeConquista) {
 }
 
 // ============================================================
-// 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME
+// 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME (CORRIGIDA)
 // ============================================================
 async function verificarJogoNaFamilia(nomeJogo) {
+  // Busca na Steam
   let jogoInfo = await searchGameOnSteam(nomeJogo);
   if (!jogoInfo) {
+    // Se não encontrar, tenta com o ID (caso seja um número)
     const appidMatch = nomeJogo.match(/^\d+$/);
     if (appidMatch) {
       const details = await getGameDetails(parseInt(appidMatch[0]));
@@ -1534,7 +1536,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 17. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
+// 17. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA (CORRIGIDA)
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
@@ -1605,12 +1607,17 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // --- IA: RESPOSTA A MENÇÕES ---
+  // --- IA: RESPOSTA A MENÇÕES (CORRIGIDA) ---
   const botMentioned = message.mentions.has(client.user);
   if (!botMentioned) return;
 
-  // Remove a menção do bot e outros @
-  let pergunta = message.content.replace(/<@!?\d+>/g, '').replace(/@(everyone|here)/g, '').trim();
+  // Remove a menção do bot de forma mais robusta
+  let pergunta = message.content
+    .replace(/<@!?\d+>/g, '')           // Remove menções do tipo <@!123> ou <@123>
+    .replace(/@(everyone|here)/g, '')    // Remove @everyone e @here
+    .replace(/@\S+/g, '')                // Remove qualquer @isolado (caso sobre)
+    .trim();
+
   if (!pergunta) {
     await message.reply('👋 Oi! Me pergunte algo! Ex: "Quem está em primeiro no ranking?"');
     return;
@@ -1640,26 +1647,27 @@ client.on('messageCreate', async (message) => {
     }
     // Perguntas sobre jogos (tem, possui, etc.)
     else if (perguntaLower.includes('tem') || perguntaLower.includes('jogo') || perguntaLower.includes('possui')) {
-      // Tenta extrair o nome do jogo da pergunta
+      // Extrai o nome do jogo de forma melhorada
       let jogoNome = null;
-      // Remove palavras comuns
-      let limpo = pergunta.replace(/\b(tem|o|jogo|possui|vc|você|alguém|na|familia|steam|família|a gente|temos|bot)\b/gi, '').trim();
-      // Remove pontuação
-      limpo = limpo.replace(/[?.,!]/g, '').trim();
-      if (limpo.length > 1) {
-        jogoNome = limpo;
+
+      // Tenta capturar o que vem depois de palavras-chave
+      const match = perguntaLower.match(/(?:tem|jogo|possui|vc tem|você tem|alguém tem|a gente tem|temos)\s+(.+)/i);
+      if (match) {
+        jogoNome = match[1].trim();
       } else {
-        // Se não conseguiu extrair, tenta pegar a última palavra (fallback)
-        const palavras = pergunta.split(' ');
-        for (const p of palavras) {
-          if (p.length > 3 && !['tem', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot'].includes(p.toLowerCase())) {
-            jogoNome = p;
-            break;
-          }
+        // Se não capturar com a regex, remove palavras comuns e pega o restante
+        const palavrasComuns = ['tem', 'o', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot', 'sobre', 'qual', 'é', 'de', 'para', 'com', 'por', 'um', 'uma'];
+        let palavras = pergunta.split(' ');
+        palavras = palavras.filter(p => p.length > 2 && !palavrasComuns.includes(p.toLowerCase()));
+        if (palavras.length > 0) {
+          jogoNome = palavras.join(' ');
         }
       }
 
       if (jogoNome) {
+        // Remove pontuação e espaços extras
+        jogoNome = jogoNome.replace(/[?.,!]/g, '').trim();
+        console.log(`🔍 [FALLBACK] Nome extraído: "${jogoNome}"`);
         const resultado = await verificarJogoNaFamilia(jogoNome);
         if (!resultado) {
           resposta = `❌ Não encontrei o jogo **${jogoNome}** na Steam.`;
