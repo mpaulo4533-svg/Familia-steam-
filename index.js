@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ (CORRIGIDA)
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ (FINAL)
 // ============================================================
 
 console.log('========================================');
@@ -68,7 +68,7 @@ async function getGroqResponse(userMessage, userName) {
     ];
 
     const completion = await groqClient.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama-3.1-70b-versatile', // Modelo válido e rápido
       messages: messages,
       temperature: 0.7,
       max_tokens: 500,
@@ -1650,12 +1650,12 @@ client.on('messageCreate', async (message) => {
       // Extrai o nome do jogo de forma melhorada
       let jogoNome = null;
 
-      // Tenta capturar o que vem depois de palavras-chave
+      // 1. Tenta capturar o que vem depois de palavras-chave
       const match = perguntaLower.match(/(?:tem|jogo|possui|vc tem|você tem|alguém tem|a gente tem|temos)\s+(.+)/i);
       if (match) {
         jogoNome = match[1].trim();
       } else {
-        // Se não capturar com a regex, remove palavras comuns e pega o restante
+        // 2. Se falhar, remove palavras comuns e pega o restante
         const palavrasComuns = ['tem', 'o', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot', 'sobre', 'qual', 'é', 'de', 'para', 'com', 'por', 'um', 'uma'];
         let palavras = pergunta.split(' ');
         palavras = palavras.filter(p => p.length > 2 && !palavrasComuns.includes(p.toLowerCase()));
@@ -1664,10 +1664,16 @@ client.on('messageCreate', async (message) => {
         }
       }
 
+      // 3. Remove "na familia", "na steam", etc. do final
       if (jogoNome) {
-        // Remove pontuação e espaços extras
-        jogoNome = jogoNome.replace(/[?.,!]/g, '').trim();
+        jogoNome = jogoNome
+          .replace(/\s*(na\s+familia|na\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
+          .replace(/[?.,!]/g, '')
+          .trim();
         console.log(`🔍 [FALLBACK] Nome extraído: "${jogoNome}"`);
+      }
+
+      if (jogoNome) {
         const resultado = await verificarJogoNaFamilia(jogoNome);
         if (!resultado) {
           resposta = `❌ Não encontrei o jogo **${jogoNome}** na Steam.`;
