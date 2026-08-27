@@ -18,7 +18,7 @@ const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags } = require('discord.js');
 
 // ============================================================
-// 0. INICIALIZAÇÃO DA IA (GROQ)
+// 0. INICIALIZAÇÃO DA IA (GROQ) - MODELO ATUALIZADO
 // ============================================================
 let groqClient = null;
 if (process.env.GROQ_API_KEY) {
@@ -36,7 +36,7 @@ if (process.env.GROQ_API_KEY) {
 // Memória por usuário para contexto (últimas mensagens)
 const userMemory = new Map();
 
-// Função que chama a Groq e retorna a resposta
+// Função que chama a Groq e retorna a resposta (MODELO CORRIGIDO)
 async function getGroqResponse(userMessage, userName) {
   if (!groqClient) return null;
 
@@ -67,8 +67,9 @@ async function getGroqResponse(userMessage, userName) {
       ...history
     ];
 
+    // ✅ MODELO ATIVO E RECOMENDADO PELA GROQ
     const completion = await groqClient.chat.completions.create({
-      model: 'llama-3.1-70b-versatile', // Modelo válido e rápido
+      model: 'llama-3.3-70b-versatile',
       messages: messages,
       temperature: 0.7,
       max_tokens: 500,
@@ -983,7 +984,7 @@ async function buscarVideoYouTube(nomeJogo, nomeConquista) {
 }
 
 // ============================================================
-// 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME (CORRIGIDA)
+// 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME
 // ============================================================
 async function verificarJogoNaFamilia(nomeJogo) {
   // Busca na Steam
@@ -1536,7 +1537,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 17. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA (CORRIGIDA)
+// 17. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
