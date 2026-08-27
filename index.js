@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ (FINAL)
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ (CONTEXTUAL)
 // ============================================================
 
 console.log('========================================');
@@ -18,7 +18,7 @@ const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags } = require('discord.js');
 
 // ============================================================
-// 0. INICIALIZAÇÃO DA IA (GROQ) - MODELO ATUALIZADO
+// 0. INICIALIZAÇÃO DA IA (GROQ) - COM CONTEXTO DINÂMICO
 // ============================================================
 let groqClient = null;
 if (process.env.GROQ_API_KEY) {
@@ -36,8 +36,8 @@ if (process.env.GROQ_API_KEY) {
 // Memória por usuário para contexto (últimas mensagens)
 const userMemory = new Map();
 
-// Função que chama a Groq e retorna a resposta (MODELO CORRIGIDO)
-async function getGroqResponse(userMessage, userName) {
+// Função que chama a Groq e retorna a resposta (aceita contexto extra)
+async function getGroqResponse(userMessage, userName, contextData = null) {
   if (!groqClient) return null;
 
   try {
@@ -54,16 +54,21 @@ async function getGroqResponse(userMessage, userName) {
       userMemory.set(userName, history.slice(-10));
     }
 
+    // Monta o sistema com contexto adicional
+    let systemContent = `Você é um assistente do servidor Steam Família no Discord.
+      Você conhece a lista de membros: ${Object.values(MEMBROS).map(m => m.nome).join(', ')}.
+      Você tem acesso ao ranking de jogos (use o comando /ranking para ver).
+      Você tem acesso à lista de jogos da biblioteca da família.
+      Responda de forma amigável, em português, e seja direto.
+      Se não souber algo, diga que não sabe e sugere usar um comando como /tem ou /ranking.`;
+
+    // Se houver contexto extra (ex: informações sobre um jogo), adiciona
+    if (contextData) {
+      systemContent += `\n\nInformações adicionais fornecidas pelo bot (dados verificados):\n${contextData}`;
+    }
+
     const messages = [
-      {
-        role: 'system',
-        content: `Você é um assistente do servidor Steam Família no Discord.
-          Você conhece a lista de membros: ${Object.values(MEMBROS).map(m => m.nome).join(', ')}.
-          Você tem acesso ao ranking de jogos (use o comando /ranking para ver).
-          Você tem acesso à lista de jogos da biblioteca da família.
-          Responda de forma amigável, em português, e seja direto.
-          Se não souber algo, diga que não sabe e sugere usar um comando como /tem ou /ranking.`
-      },
+      { role: 'system', content: systemContent },
       ...history
     ];
 
@@ -1608,7 +1613,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // --- IA: RESPOSTA A MENÇÕES (CORRIGIDA) ---
+  // --- IA: RESPOSTA A MENÇÕES (COM CONTEXTO) ---
   const botMentioned = message.mentions.has(client.user);
   if (!botMentioned) return;
 
@@ -1629,13 +1634,61 @@ client.on('messageCreate', async (message) => {
   // Envia indicador de digitação
   await message.channel.sendTyping();
 
-  // Tenta resposta da IA
-  let resposta = await getGroqResponse(pergunta, message.author.username);
+  // --- DETECTA SE A PERGUNTA É SOBRE UM JOGO E BUSCA DADOS ---
+  let contextoIA = null;
+  const perguntaLower = pergunta.toLowerCase();
+  const palavrasChave = ['tem', 'jogo', 'possui', 'vc tem', 'você tem', 'alguém tem', 'a gente tem', 'temos'];
+
+  // Verifica se a pergunta contém alguma palavra-chave
+  const contemPalavraChave = palavrasChave.some(p => perguntaLower.includes(p));
+  if (contemPalavraChave) {
+    // Tenta extrair o nome do jogo
+    let jogoNome = null;
+
+    // 1. Tenta capturar o que vem depois de palavras-chave
+    const match = perguntaLower.match(/(?:tem|jogo|possui|vc tem|você tem|alguém tem|a gente tem|temos)\s+(.+)/i);
+    if (match) {
+      jogoNome = match[1].trim();
+    } else {
+      // 2. Se falhar, remove palavras comuns e pega o restante
+      const palavrasComuns = ['tem', 'o', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot', 'sobre', 'qual', 'é', 'de', 'para', 'com', 'por', 'um', 'uma'];
+      let palavras = pergunta.split(' ');
+      palavras = palavras.filter(p => p.length > 2 && !palavrasComuns.includes(p.toLowerCase()));
+      if (palavras.length > 0) {
+        jogoNome = palavras.join(' ');
+      }
+    }
+
+    // 3. Remove "na familia", "na steam", etc. do final
+    if (jogoNome) {
+      jogoNome = jogoNome
+        .replace(/\s*(na\s+familia|na\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
+        .replace(/[?.,!]/g, '')
+        .trim();
+      console.log(`🔍 [CONTEXTO] Nome extraído: "${jogoNome}"`);
+    }
+
+    if (jogoNome) {
+      const resultado = await verificarJogoNaFamilia(jogoNome);
+      if (resultado) {
+        if (resultado.encontrado) {
+          contextoIA = `O jogo "${resultado.jogo.nome}" está na biblioteca da família. Donos: ${resultado.donos.join(', ')}. Link: ${resultado.link}`;
+        } else if (resultado.motivo) {
+          contextoIA = `O jogo "${resultado.jogo.nome}" não é compatível com Family Sharing. Motivo: ${resultado.motivo}`;
+        } else {
+          contextoIA = `O jogo "${resultado.jogo.nome}" NÃO está na biblioteca da família.`;
+        }
+      } else {
+        contextoIA = `Não encontrei o jogo "${jogoNome}" na Steam.`;
+      }
+    }
+  }
+
+  // Tenta resposta da IA (passando o contexto se tiver)
+  let resposta = await getGroqResponse(pergunta, message.author.username, contextoIA);
 
   // Fallback caso a IA não responda
   if (!resposta) {
-    const perguntaLower = pergunta.toLowerCase();
-
     // Perguntas sobre ranking
     if (perguntaLower.includes('ranking') || perguntaLower.includes('primeiro') || perguntaLower.includes('quem está na frente')) {
       const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
@@ -1646,50 +1699,9 @@ client.on('messageCreate', async (message) => {
         resposta = '📊 Ainda não tenho dados de ranking.';
       }
     }
-    // Perguntas sobre jogos (tem, possui, etc.)
-    else if (perguntaLower.includes('tem') || perguntaLower.includes('jogo') || perguntaLower.includes('possui')) {
-      // Extrai o nome do jogo de forma melhorada
-      let jogoNome = null;
-
-      // 1. Tenta capturar o que vem depois de palavras-chave
-      const match = perguntaLower.match(/(?:tem|jogo|possui|vc tem|você tem|alguém tem|a gente tem|temos)\s+(.+)/i);
-      if (match) {
-        jogoNome = match[1].trim();
-      } else {
-        // 2. Se falhar, remove palavras comuns e pega o restante
-        const palavrasComuns = ['tem', 'o', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot', 'sobre', 'qual', 'é', 'de', 'para', 'com', 'por', 'um', 'uma'];
-        let palavras = pergunta.split(' ');
-        palavras = palavras.filter(p => p.length > 2 && !palavrasComuns.includes(p.toLowerCase()));
-        if (palavras.length > 0) {
-          jogoNome = palavras.join(' ');
-        }
-      }
-
-      // 3. Remove "na familia", "na steam", etc. do final
-      if (jogoNome) {
-        jogoNome = jogoNome
-          .replace(/\s*(na\s+familia|na\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
-          .replace(/[?.,!]/g, '')
-          .trim();
-        console.log(`🔍 [FALLBACK] Nome extraído: "${jogoNome}"`);
-      }
-
-      if (jogoNome) {
-        const resultado = await verificarJogoNaFamilia(jogoNome);
-        if (!resultado) {
-          resposta = `❌ Não encontrei o jogo **${jogoNome}** na Steam.`;
-        } else if (!resultado.encontrado) {
-          if (resultado.motivo) {
-            resposta = resultado.motivo;
-          } else {
-            resposta = `❌ **${resultado.jogo.nome}** NÃO está na biblioteca da família.`;
-          }
-        } else {
-          resposta = `✅ **${resultado.jogo.nome}** está na biblioteca da família!\n👥 Dono(s): ${resultado.donos.join(', ')}\n🔗 ${resultado.link}`;
-        }
-      } else {
-        resposta = `❓ Não entendi qual jogo você está perguntando. Tente mencionar o nome do jogo claramente.`;
-      }
+    // Se já temos contexto, usa ele no fallback
+    else if (contextoIA) {
+      resposta = contextoIA;
     }
     // Outras perguntas
     else {
