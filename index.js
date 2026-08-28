@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI + DM
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETAa COM OPENAI + DM
 // ============================================================
 
 console.log('========================================');
