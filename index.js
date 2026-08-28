@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM IA GROQ (FINAL)
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI
 // ============================================================
 
 console.log('========================================');
@@ -18,27 +18,27 @@ const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags } = require('discord.js');
 
 // ============================================================
-// 0. INICIALIZAÇÃO DA IA (GROQ) - MODELO ATIVO
+// 0. INICIALIZAÇÃO DA IA (OPENAI)
 // ============================================================
-let groqClient = null;
-if (process.env.GROQ_API_KEY) {
+let aiClient = null;
+if (process.env.OPENAI_API_KEY) {
   try {
-    const Groq = require('groq-sdk');
-    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
-    console.log('✅ Groq AI inicializado com sucesso!');
+    const OpenAI = require('openai');
+    aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    console.log('✅ OpenAI inicializado com sucesso!');
   } catch (e) {
-    console.warn('⚠️ Erro ao inicializar Groq:', e.message);
+    console.warn('⚠️ Erro ao inicializar OpenAI:', e.message);
   }
 } else {
-  console.warn('⚠️ GROQ_API_KEY não definida. IA não funcionará.');
+  console.warn('⚠️ OPENAI_API_KEY não definida. IA não funcionará.');
 }
 
 // Memória por usuário para contexto (últimas mensagens)
 const userMemory = new Map();
 
-// Função que chama a Groq e retorna a resposta (aceita contexto extra)
-async function getGroqResponse(userMessage, userName, contextData = null) {
-  if (!groqClient) return null;
+// Função que chama a OpenAI e retorna a resposta (aceita contexto extra)
+async function getAIResponse(userMessage, userName, contextData = null) {
+  if (!aiClient) return null;
 
   try {
     if (!userMemory.has(userName)) {
@@ -68,9 +68,9 @@ async function getGroqResponse(userMessage, userName, contextData = null) {
       ...history
     ];
 
-    // ✅ MODELO ATIVO E RECOMENDADO (Llama 3.3 70B)
-    const completion = await groqClient.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+    // Modelo rápido, barato e estável
+    const completion = await aiClient.chat.completions.create({
+      model: 'gpt-4o-mini', // ou 'gpt-3.5-turbo' para ainda mais barato
       messages: messages,
       temperature: 0.7,
       max_tokens: 500,
@@ -81,7 +81,7 @@ async function getGroqResponse(userMessage, userName, contextData = null) {
     userMemory.set(userName, history);
     return resposta;
   } catch (error) {
-    console.error('❌ Erro na Groq:', error.message);
+    console.error('❌ Erro na OpenAI:', error.message);
     return null;
   }
 }
@@ -980,12 +980,27 @@ async function buscarVideoYouTube(nomeJogo, nomeConquista) {
 }
 
 // ============================================================
-// 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME
+// 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME (COM EXTRAÇÃO CORRIGIDA)
 // ============================================================
 async function verificarJogoNaFamilia(nomeJogo) {
-  let jogoInfo = await searchGameOnSteam(nomeJogo);
+  // Primeiro, limpa o nome removendo sufixos comuns
+  let nomeLimpo = nomeJogo
+    .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam|da\s+steam|na\s+steam)\s*$/i, '')
+    .replace(/[?.,!]/g, '')
+    .trim();
+
+  // Se depois da limpeza ficou vazio, tenta extrair palavras significativas
+  if (!nomeLimpo || nomeLimpo.length < 3) {
+    const palavras = nomeJogo.split(' ');
+    const palavrasFiltradas = palavras.filter(p => p.length > 2 && !['na', 'da', 'steam', 'familia', 'família'].includes(p.toLowerCase()));
+    nomeLimpo = palavrasFiltradas.join(' ');
+  }
+
+  console.log(`🔍 [VERIFICAR] Nome original: "${nomeJogo}" -> Nome limpo: "${nomeLimpo}"`);
+
+  let jogoInfo = await searchGameOnSteam(nomeLimpo);
   if (!jogoInfo) {
-    const appidMatch = nomeJogo.match(/^\d+$/);
+    const appidMatch = nomeLimpo.match(/^\d+$/);
     if (appidMatch) {
       const details = await getGameDetails(parseInt(appidMatch[0]));
       if (details) {
@@ -1642,12 +1657,21 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // 🔥 CORREÇÃO: remove TODAS as combinações de sufixos
+    // 🔥 CORREÇÃO: usa a função de limpeza da verificação
     if (jogoNome) {
+      // Remove sufixos comuns
       jogoNome = jogoNome
         .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
         .replace(/[?.,!]/g, '')
         .trim();
+
+      // Se depois da limpeza ficou vazio, tenta extrair palavras significativas
+      if (!jogoNome || jogoNome.length < 3) {
+        const palavras = pergunta.split(' ');
+        const palavrasFiltradas = palavras.filter(p => p.length > 2 && !['na', 'da', 'steam', 'familia', 'família'].includes(p.toLowerCase()));
+        jogoNome = palavrasFiltradas.join(' ');
+      }
+
       console.log(`🔍 [CONTEXTO] Nome extraído: "${jogoNome}"`);
     }
 
@@ -1667,7 +1691,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  let resposta = await getGroqResponse(pergunta, message.author.username, contextoIA);
+  let resposta = await getAIResponse(pergunta, message.author.username, contextoIA);
 
   if (!resposta) {
     if (perguntaLower.includes('ranking') || perguntaLower.includes('primeiro') || perguntaLower.includes('quem está na frente')) {
