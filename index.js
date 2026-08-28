@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI (CORRIGIDA)
 // ============================================================
 
 console.log('========================================');
@@ -18,9 +18,11 @@ const axios = require('axios');
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags } = require('discord.js');
 
 // ============================================================
-// 0. INICIALIZAÇÃO DA IA (OPENAI)
+// 0. INICIALIZAÇÃO DA IA (OPENAI) COM FALLBACK
 // ============================================================
 let aiClient = null;
+let usarGroq = false;
+
 if (process.env.OPENAI_API_KEY) {
   try {
     const OpenAI = require('openai');
@@ -28,15 +30,62 @@ if (process.env.OPENAI_API_KEY) {
     console.log('✅ OpenAI inicializado com sucesso!');
   } catch (e) {
     console.warn('⚠️ Erro ao inicializar OpenAI:', e.message);
+    // Se não conseguir carregar o módulo, tenta usar Groq (se disponível)
+    if (process.env.GROQ_API_KEY) {
+      try {
+        const Groq = require('groq-sdk');
+        aiClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
+        usarGroq = true;
+        console.log('✅ Fallback: Groq inicializado com sucesso!');
+      } catch (err) {
+        console.warn('⚠️ Fallback Groq também falhou:', err.message);
+        aiClient = null;
+      }
+    }
   }
 } else {
-  console.warn('⚠️ OPENAI_API_KEY não definida. IA não funcionará.');
+  console.warn('⚠️ OPENAI_API_KEY não definida. Tentando Groq...');
+  if (process.env.GROQ_API_KEY) {
+    try {
+      const Groq = require('groq-sdk');
+      aiClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
+      usarGroq = true;
+      console.log('✅ Groq inicializado com sucesso!');
+    } catch (e) {
+      console.warn('⚠️ Erro ao inicializar Groq:', e.message);
+      aiClient = null;
+    }
+  }
+}
+
+if (!aiClient) {
+  console.error('❌ Nenhum cliente de IA disponível. Verifique suas chaves e dependências.');
 }
 
 // Memória por usuário para contexto (últimas mensagens)
 const userMemory = new Map();
 
-// Função que chama a OpenAI e retorna a resposta (aceita contexto extra)
+// Função auxiliar para limpar nome do jogo
+function limparNomeJogo(texto) {
+  // Remove sufixos comuns
+  let limpo = texto
+    .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam|na\s+steam)\s*$/i, '')
+    .replace(/[?.,!]/g, '')
+    .trim();
+  
+  // Se ainda tiver palavras como "steam", "familia", etc., tenta extrair apenas o nome do jogo
+  if (limpo.match(/(steam|familia|família)/i)) {
+    const palavras = texto.split(' ');
+    const filtradas = palavras.filter(p => 
+      p.length > 2 && 
+      !['na', 'da', 'steam', 'familia', 'família', 'do', 'dos', 'das'].includes(p.toLowerCase())
+    );
+    limpo = filtradas.join(' ');
+  }
+  return limpo.trim();
+}
+
+// Função que chama a IA (OpenAI ou Groq) e retorna a resposta
 async function getAIResponse(userMessage, userName, contextData = null) {
   if (!aiClient) return null;
 
@@ -68,20 +117,31 @@ async function getAIResponse(userMessage, userName, contextData = null) {
       ...history
     ];
 
-    // Modelo rápido, barato e estável
-    const completion = await aiClient.chat.completions.create({
-      model: 'gpt-4o-mini', // ou 'gpt-3.5-turbo' para ainda mais barato
-      messages: messages,
-      temperature: 0.7,
-      max_tokens: 500,
-    });
+    let completion;
+    if (usarGroq) {
+      // Usa Groq
+      completion = await aiClient.chat.completions.create({
+        model: 'llama-3.1-70b-versatile',
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 500,
+      });
+    } else {
+      // Usa OpenAI
+      completion = await aiClient.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 500,
+      });
+    }
 
     const resposta = completion.choices[0]?.message?.content || 'Desculpe, não consegui processar sua pergunta.';
     history.push({ role: 'assistant', content: resposta });
     userMemory.set(userName, history);
     return resposta;
   } catch (error) {
-    console.error('❌ Erro na OpenAI:', error.message);
+    console.error('❌ Erro na IA:', error.message);
     return null;
   }
 }
@@ -983,18 +1043,8 @@ async function buscarVideoYouTube(nomeJogo, nomeConquista) {
 // 12. FUNÇÃO PARA VERIFICAR JOGO NA FAMÍLIA POR NOME (COM EXTRAÇÃO CORRIGIDA)
 // ============================================================
 async function verificarJogoNaFamilia(nomeJogo) {
-  // Primeiro, limpa o nome removendo sufixos comuns
-  let nomeLimpo = nomeJogo
-    .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam|da\s+steam|na\s+steam)\s*$/i, '')
-    .replace(/[?.,!]/g, '')
-    .trim();
-
-  // Se depois da limpeza ficou vazio, tenta extrair palavras significativas
-  if (!nomeLimpo || nomeLimpo.length < 3) {
-    const palavras = nomeJogo.split(' ');
-    const palavrasFiltradas = palavras.filter(p => p.length > 2 && !['na', 'da', 'steam', 'familia', 'família'].includes(p.toLowerCase()));
-    nomeLimpo = palavrasFiltradas.join(' ');
-  }
+  // Limpa o nome usando a função auxiliar
+  const nomeLimpo = limparNomeJogo(nomeJogo);
 
   console.log(`🔍 [VERIFICAR] Nome original: "${nomeJogo}" -> Nome limpo: "${nomeLimpo}"`);
 
@@ -1657,21 +1707,9 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // 🔥 CORREÇÃO: usa a função de limpeza da verificação
+    // 🔥 CORREÇÃO: usa a função de limpeza
     if (jogoNome) {
-      // Remove sufixos comuns
-      jogoNome = jogoNome
-        .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
-        .replace(/[?.,!]/g, '')
-        .trim();
-
-      // Se depois da limpeza ficou vazio, tenta extrair palavras significativas
-      if (!jogoNome || jogoNome.length < 3) {
-        const palavras = pergunta.split(' ');
-        const palavrasFiltradas = palavras.filter(p => p.length > 2 && !['na', 'da', 'steam', 'familia', 'família'].includes(p.toLowerCase()));
-        jogoNome = palavrasFiltradas.join(' ');
-      }
-
+      jogoNome = limparNomeJogo(jogoNome);
       console.log(`🔍 [CONTEXTO] Nome extraído: "${jogoNome}"`);
     }
 
