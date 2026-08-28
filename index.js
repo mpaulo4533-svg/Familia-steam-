@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI + DM
 // ============================================================
 
 console.log('========================================');
@@ -1036,7 +1036,7 @@ async function verificarJogoNaFamilia(nomeJogo) {
 }
 
 // ============================================================
-// 13. RANKING DE CONQUISTAS (NOVO)
+// 13. RANKING DE CONQUISTAS
 // ============================================================
 function calcularRankingConquistas() {
   const conquistasPorUsuario = {};
@@ -1049,19 +1049,102 @@ function calcularRankingConquistas() {
     }
     conquistasPorUsuario[member.nome] = total;
   }
-  // Ordenar por total decrescente
   const sorted = Object.entries(conquistasPorUsuario).sort((a, b) => b[1] - a[1]);
   return sorted.map(([nome, total]) => ({ nome, total }));
 }
 
 // ============================================================
-// 14. CLIENT DISCORD
+// 14. FUNÇÃO AUXILIAR PARA PROCESSAR PERGUNTAS (SERVIDOR E DM)
+// ============================================================
+async function processarPergunta(pergunta, userName) {
+  const perguntaLower = pergunta.toLowerCase();
+
+  // --- DETECTAR PERGUNTAS SOBRE RANKING DE CONQUISTAS ---
+  if (perguntaLower.includes('conquista') || perguntaLower.includes('desbloqueou') || 
+      (perguntaLower.includes('quem') && perguntaLower.includes('mais'))) {
+    const rankingConquistas = calcularRankingConquistas();
+    if (rankingConquistas.length > 0) {
+      const top = rankingConquistas[0];
+      let mensagem = `🏆 **${top.nome}** é quem mais desbloqueou conquistas até agora, com **${top.total} conquistas**!`;
+      if (rankingConquistas.length > 1) {
+        mensagem += `\n🥈 **${rankingConquistas[1].nome}** — ${rankingConquistas[1].total} conquistas`;
+      }
+      if (rankingConquistas.length > 2) {
+        mensagem += `\n🥉 **${rankingConquistas[2].nome}** — ${rankingConquistas[2].total} conquistas`;
+      }
+      return mensagem;
+    } else {
+      return '📊 Ainda não tenho dados suficientes de conquistas. Os membros precisam jogar mais!';
+    }
+  }
+
+  // --- DETECTAR PERGUNTAS SOBRE RANKING DE JOGOS ---
+  if (perguntaLower.includes('ranking') || perguntaLower.includes('primeiro') || perguntaLower.includes('quem está na frente')) {
+    const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
+    if (rankingArray.length > 0) {
+      const primeiro = rankingArray[0];
+      return `🏆 **${primeiro.nome}** está em primeiro no ranking com **${primeiro.jogos} jogos**!`;
+    } else {
+      return '📊 Ainda não tenho dados de ranking.';
+    }
+  }
+
+  // --- DETECTAR PERGUNTAS SOBRE JOGOS ---
+  const palavrasChave = ['tem', 'jogo', 'possui', 'vc tem', 'você tem', 'alguém tem', 'a gente tem', 'temos'];
+  const contemPalavraChave = palavrasChave.some(p => perguntaLower.includes(p));
+  if (contemPalavraChave) {
+    let jogoNome = null;
+    const match = perguntaLower.match(/(?:tem|jogo|possui|vc tem|você tem|alguém tem|a gente tem|temos)\s+(.+)/i);
+    if (match) {
+      jogoNome = match[1].trim();
+    } else {
+      const palavrasComuns = ['tem', 'o', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot', 'sobre', 'qual', 'é', 'de', 'para', 'com', 'por', 'um', 'uma'];
+      let palavras = pergunta.split(' ');
+      palavras = palavras.filter(p => p.length > 2 && !palavrasComuns.includes(p.toLowerCase()));
+      if (palavras.length > 0) {
+        jogoNome = palavras.join(' ');
+      }
+    }
+    if (jogoNome) {
+      jogoNome = jogoNome
+        .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
+        .replace(/[?.,!]/g, '')
+        .trim();
+      if (!jogoNome || jogoNome.length < 3) {
+        const palavras = pergunta.split(' ');
+        const palavrasFiltradas = palavras.filter(p => p.length > 2 && !['na', 'da', 'steam', 'familia', 'família'].includes(p.toLowerCase()));
+        jogoNome = palavrasFiltradas.join(' ');
+      }
+      console.log(`🔍 [CONTEXTO] Nome extraído: "${jogoNome}"`);
+      const resultado = await verificarJogoNaFamilia(jogoNome);
+      if (resultado) {
+        if (resultado.encontrado) {
+          return `✅ **${resultado.jogo.nome}** está na biblioteca da família!\n👥 Dono(s): ${resultado.donos.join(', ')}\n🔗 ${resultado.link}`;
+        } else if (resultado.motivo) {
+          return resultado.motivo;
+        } else {
+          return `❌ **${resultado.jogo.nome}** NÃO está na biblioteca da família.`;
+        }
+      } else {
+        return `❌ Não encontrei o jogo **${jogoNome}** na Steam.`;
+      }
+    } else {
+      return `❓ Não entendi qual jogo você está perguntando. Tente mencionar o nome do jogo claramente.`;
+    }
+  }
+
+  // Se não detectou nenhuma intenção, retorna null para chamar a IA
+  return null;
+}
+
+// ============================================================
+// 15. CLIENT DISCORD
 // ============================================================
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 client.on('error', (e) => console.error('❌ [ERROR]', e.message));
 
 // ============================================================
-// 15. READY
+// 16. READY
 // ============================================================
 client.once('clientReady', async () => {
   console.log(`✅ Bot online como ${client.user.tag}`);
@@ -1110,7 +1193,7 @@ client.once('clientReady', async () => {
 });
 
 // ============================================================
-// 16. AUTOCOMPLETE
+// 17. AUTOCOMPLETE
 // ============================================================
 const recentGamesCache = new Map();
 const RECENT_GAMES_CACHE_TTL = 60000;
@@ -1170,7 +1253,7 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 17. COMANDOS SLASH
+// 18. COMANDOS SLASH
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -1562,42 +1645,32 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // ============================================================
-// 18. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
+// 19. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
 // ============================================================
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // --- RESPOSTAS AUTOMÁTICAS EM DM (sem IA) ---
+  // --- RESPOSTAS AUTOMÁTICAS EM DM (COM IA E DETECÇÃO DE INTENÇÃO) ---
   if (!message.guild) {
     try {
-      const content = message.content.toLowerCase().trim();
-      const padroes = [
-        /^(a gente tem|tem o jogo|possui o|temos o|vc tem|você tem|alguém tem|tem o|tem) (.+)/i,
-        /^(a gente tem|tem o jogo|possui o|temos o|vc tem|você tem|alguém tem|tem o) (.+)\?/i,
-        /^(.+)\?$/i
-      ];
-      let jogoNome = null;
-      for (const pattern of padroes) {
-        const match = content.match(pattern);
-        if (match) { jogoNome = match[2] || match[1]; break; }
-      }
-      if (!jogoNome) return;
-      jogoNome = jogoNome.trim();
+      const pergunta = message.content.trim();
+      if (!pergunta) return;
 
-      const resultado = await verificarJogoNaFamilia(jogoNome);
-      if (!resultado) {
-        await message.reply(`❌ Não encontrei o jogo **${jogoNome}** na Steam.`);
-        return;
+      console.log(`📩 [DM] ${message.author.username} perguntou: "${pergunta}"`);
+
+      // Tenta detectar intenção e responder diretamente
+      let resposta = await processarPergunta(pergunta, message.author.username);
+
+      // Se não detectou, chama a IA
+      if (!resposta) {
+        resposta = await getAIResponse(pergunta, message.author.username, null);
       }
-      if (!resultado.encontrado) {
-        if (resultado.motivo) {
-          await message.reply(resultado.motivo);
-        } else {
-          await message.reply(`❌ **${resultado.jogo.nome}** NÃO está na biblioteca da família.`);
-        }
-        return;
+
+      if (resposta) {
+        await message.reply(resposta);
+      } else {
+        await message.reply('❌ Desculpe, não consegui processar sua pergunta. Tente novamente mais tarde.');
       }
-      await message.reply(`✅ **${resultado.jogo.nome}** está na biblioteca da família!\n👥 Dono(s): ${resultado.donos.join(', ')}\n🔗 ${resultado.link}`);
     } catch (error) {
       console.error('❌ Erro ao processar DM:', error.message);
       await message.reply('❌ Ocorreu um erro. Tente novamente.');
@@ -1633,7 +1706,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // --- IA: RESPOSTA A MENÇÕES (COM DETECÇÃO DE CONQUISTAS) ---
+  // --- IA: RESPOSTA A MENÇÕES NO SERVIDOR ---
   const botMentioned = message.mentions.has(client.user);
   if (!botMentioned) return;
 
@@ -1652,108 +1725,25 @@ client.on('messageCreate', async (message) => {
 
   await message.channel.sendTyping();
 
-  let resposta = null;
-  const perguntaLower = pergunta.toLowerCase();
+  // Tenta detectar intenção e responder diretamente
+  let resposta = await processarPergunta(pergunta, message.author.username);
 
-  // --- DETECTAR PERGUNTAS SOBRE RANKING DE CONQUISTAS ---
-  if (perguntaLower.includes('conquista') || perguntaLower.includes('desbloqueou') || 
-      (perguntaLower.includes('quem') && perguntaLower.includes('mais'))) {
-    const rankingConquistas = calcularRankingConquistas();
-    if (rankingConquistas.length > 0) {
-      const top = rankingConquistas[0];
-      let mensagem = `🏆 **${top.nome}** é quem mais desbloqueou conquistas até agora, com **${top.total} conquistas**!`;
-      if (rankingConquistas.length > 1) {
-        mensagem += `\n🥈 **${rankingConquistas[1].nome}** — ${rankingConquistas[1].total} conquistas`;
-      }
-      if (rankingConquistas.length > 2) {
-        mensagem += `\n🥉 **${rankingConquistas[2].nome}** — ${rankingConquistas[2].total} conquistas`;
-      }
-      resposta = mensagem;
-    } else {
-      resposta = '📊 Ainda não tenho dados suficientes de conquistas. Os membros precisam jogar mais!';
-    }
-  }
-
-  // --- DETECTAR PERGUNTAS SOBRE RANKING DE JOGOS ---
-  if (!resposta && (perguntaLower.includes('ranking') || perguntaLower.includes('primeiro') || perguntaLower.includes('quem está na frente'))) {
-    const rankingArray = Object.values(db.ranking || {}).sort((a, b) => b.jogos - a.jogos);
-    if (rankingArray.length > 0) {
-      const primeiro = rankingArray[0];
-      resposta = `🏆 **${primeiro.nome}** está em primeiro no ranking com **${primeiro.jogos} jogos**!`;
-    } else {
-      resposta = '📊 Ainda não tenho dados de ranking.';
-    }
-  }
-
-  // --- DETECTAR PERGUNTAS SOBRE JOGOS ---
+  // Se não detectou, chama a IA
   if (!resposta) {
-    const palavrasChave = ['tem', 'jogo', 'possui', 'vc tem', 'você tem', 'alguém tem', 'a gente tem', 'temos'];
-    const contemPalavraChave = palavrasChave.some(p => perguntaLower.includes(p));
-    if (contemPalavraChave) {
-      let jogoNome = null;
-      const match = perguntaLower.match(/(?:tem|jogo|possui|vc tem|você tem|alguém tem|a gente tem|temos)\s+(.+)/i);
-      if (match) {
-        jogoNome = match[1].trim();
-      } else {
-        const palavrasComuns = ['tem', 'o', 'jogo', 'possui', 'vc', 'você', 'alguém', 'na', 'familia', 'steam', 'família', 'a', 'gente', 'temos', 'bot', 'sobre', 'qual', 'é', 'de', 'para', 'com', 'por', 'um', 'uma'];
-        let palavras = pergunta.split(' ');
-        palavras = palavras.filter(p => p.length > 2 && !palavrasComuns.includes(p.toLowerCase()));
-        if (palavras.length > 0) {
-          jogoNome = palavras.join(' ');
-        }
-      }
-      if (jogoNome) {
-        jogoNome = jogoNome
-          .replace(/\s*(na\s+familia\s+steam|na\s+familia|na\s+steam|da\s+familia\s+steam|da\s+familia|da\s+steam)\s*$/i, '')
-          .replace(/[?.,!]/g, '')
-          .trim();
-        if (!jogoNome || jogoNome.length < 3) {
-          const palavras = pergunta.split(' ');
-          const palavrasFiltradas = palavras.filter(p => p.length > 2 && !['na', 'da', 'steam', 'familia', 'família'].includes(p.toLowerCase()));
-          jogoNome = palavrasFiltradas.join(' ');
-        }
-        console.log(`🔍 [CONTEXTO] Nome extraído: "${jogoNome}"`);
-        const resultado = await verificarJogoNaFamilia(jogoNome);
-        if (resultado) {
-          if (resultado.encontrado) {
-            resposta = `✅ **${resultado.jogo.nome}** está na biblioteca da família!\n👥 Dono(s): ${resultado.donos.join(', ')}\n🔗 ${resultado.link}`;
-          } else if (resultado.motivo) {
-            resposta = resultado.motivo;
-          } else {
-            resposta = `❌ **${resultado.jogo.nome}** NÃO está na biblioteca da família.`;
-          }
-        } else {
-          resposta = `❌ Não encontrei o jogo **${jogoNome}** na Steam.`;
-        }
-      } else {
-        resposta = `❓ Não entendi qual jogo você está perguntando. Tente mencionar o nome do jogo claramente.`;
-      }
-    }
+    resposta = await getAIResponse(pergunta, message.author.username, null);
   }
 
-  // --- SE NÃO DETECTOU NENHUMA INTENÇÃO, CHAMA A IA ---
   if (!resposta) {
-    // Tenta obter contexto adicional para a IA (já temos o contextoIA, mas aqui vamos chamar sem contexto)
-    const contextoIA = null; // podemos passar algo se quisermos
-    const respostaIA = await getAIResponse(pergunta, message.author.username, contextoIA);
-    if (respostaIA) {
-      resposta = respostaIA;
-    } else {
-      resposta = `❓ Não entendi sua pergunta. Tente perguntar sobre o ranking, jogos disponíveis, ou use \`/tem\` e \`/ranking\`.`;
-    }
+    resposta = `❓ Não entendi sua pergunta. Tente perguntar sobre o ranking, jogos disponíveis, ou use \`/tem\` e \`/ranking\`.`;
   }
 
-  if (resposta && resposta.length > 1900) resposta = resposta.substring(0, 1900) + '...';
+  if (resposta.length > 1900) resposta = resposta.substring(0, 1900) + '...';
 
-  if (resposta) {
-    await message.reply(resposta);
-  } else {
-    await message.reply('❌ Desculpe, estou com problemas no momento. Tente novamente mais tarde.');
-  }
+  await message.reply(resposta);
 });
 
 // ============================================================
-// 19. HEALTH CHECK E LOGIN
+// 20. HEALTH CHECK E LOGIN
 // ============================================================
 if (process.env.PORT) {
   try {
