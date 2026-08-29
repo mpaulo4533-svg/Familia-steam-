@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI + DM
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI + DM (CORRIGIDO)
 // ============================================================
 
 console.log('========================================');
@@ -38,10 +38,7 @@ const userMemory = new Map();
 
 // Função que chama a OpenAI e retorna a resposta
 async function getAIResponse(userMessage, userName, contextData = null) {
-  if (!aiClient) {
-    console.warn('⚠️ getAIResponse chamado sem OpenAI disponível');
-    return null;
-  }
+  if (!aiClient) return null;
 
   try {
     if (!userMemory.has(userName)) {
@@ -1141,9 +1138,16 @@ async function processarPergunta(pergunta, userName) {
 }
 
 // ============================================================
-// 15. CLIENT DISCORD
+// 15. CLIENT DISCORD (INTENT CORRIGIDO)
 // ============================================================
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages  // 🔥 ADICIONADO PARA RECEBER DMs
+  ]
+});
 client.on('error', (e) => console.error('❌ [ERROR]', e.message));
 
 // ============================================================
@@ -1651,6 +1655,9 @@ client.on('interactionCreate', async (interaction) => {
 // 19. RESPOSTAS AUTOMÁTICAS EM DM E COMANDOS DE TEXTO DO DONO + IA
 // ============================================================
 client.on('messageCreate', async (message) => {
+  // Log para verificar se qualquer mensagem chega (inclusive DMs)
+  console.log(`📨 [messageCreate] Recebido de ${message.author.tag} em ${message.guild ? 'servidor' : 'DM'}: "${message.content}"`);
+
   if (message.author.bot) return;
 
   // --- RESPOSTAS AUTOMÁTICAS EM DM (COM IA E DETECÇÃO DE INTENÇÃO) ---
