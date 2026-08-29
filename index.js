@@ -38,7 +38,10 @@ const userMemory = new Map();
 
 // Função que chama a OpenAI e retorna a resposta
 async function getAIResponse(userMessage, userName, contextData = null) {
-  if (!aiClient) return null;
+  if (!aiClient) {
+    console.warn('⚠️ getAIResponse chamado sem OpenAI disponível');
+    return null;
+  }
 
   try {
     if (!userMemory.has(userName)) {
@@ -1654,7 +1657,10 @@ client.on('messageCreate', async (message) => {
   if (!message.guild) {
     try {
       const pergunta = message.content.trim();
-      if (!pergunta) return;
+      if (!pergunta) {
+        console.log(`📩 [DM] ${message.author.username} enviou mensagem vazia.`);
+        return;
+      }
 
       console.log(`📩 [DM] ${message.author.username} perguntou: "${pergunta}"`);
 
@@ -1663,17 +1669,24 @@ client.on('messageCreate', async (message) => {
 
       // Se não detectou, chama a IA
       if (!resposta) {
+        console.log(`📩 [DM] Nenhuma intenção detectada, chamando IA...`);
         resposta = await getAIResponse(pergunta, message.author.username, null);
       }
 
       if (resposta) {
+        console.log(`📩 [DM] Respondendo: ${resposta.substring(0, 100)}...`);
         await message.reply(resposta);
       } else {
+        console.log(`📩 [DM] Nenhuma resposta gerada.`);
         await message.reply('❌ Desculpe, não consegui processar sua pergunta. Tente novamente mais tarde.');
       }
     } catch (error) {
       console.error('❌ Erro ao processar DM:', error.message);
-      await message.reply('❌ Ocorreu um erro. Tente novamente.');
+      try {
+        await message.reply('❌ Ocorreu um erro ao processar sua mensagem. Tente novamente.');
+      } catch (e) {
+        console.error('❌ Erro ao enviar resposta de erro na DM:', e.message);
+      }
     }
     return;
   }
