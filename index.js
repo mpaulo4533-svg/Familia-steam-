@@ -1,5 +1,5 @@
 // ============================================================
-// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI + DM (CORRIGIDO)
+// BOT STEAM FAMÍLIA - VERSÃO COMPLETA COM OPENAI + DM (FINAL)
 // ============================================================
 
 console.log('========================================');
@@ -374,25 +374,43 @@ async function saveWishlistLink(discordId, link) {
 }
 
 // ============================================================
-// 6. FUNÇÕES DA STEAM API
+// 6. FUNÇÕES DA STEAM API (COM TRATAMENTO DE ERROS ROBUSTO)
 // ============================================================
 let ultimaRequisicao = 0;
 const MIN_INTERVALO = 1500;
+const TIMEOUT_STEAM = 15000; // 15 segundos
+
 async function fetchSteam(url, params = {}, retries = 3) {
   const agora = Date.now();
   const espera = Math.max(0, MIN_INTERVALO - (agora - ultimaRequisicao));
   if (espera > 0) await new Promise(r => setTimeout(r, espera));
   ultimaRequisicao = Date.now();
+
   for (let i = 0; i < retries; i++) {
     try {
-      const resp = await axios.get(url, { params: { ...params, key: STEAM_KEY }, timeout: 10000, headers: { 'User-Agent': 'SteamFamilyBot/2.0' } });
-      if (resp.status === 429) { await new Promise(r => setTimeout(r, 2000 * (i + 1))); continue; }
+      const resp = await axios.get(url, {
+        params: { ...params, key: STEAM_KEY },
+        timeout: TIMEOUT_STEAM,
+        headers: { 'User-Agent': 'SteamFamilyBot/2.0' }
+      });
+      if (resp.status === 429) {
+        console.log(`⏱️ Rate limit (429) na Steam API, aguardando ${2 * (i + 1)}s...`);
+        await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+        continue;
+      }
       return resp.data;
     } catch (e) {
       const status = e.response?.status;
-      if (status === 429) { await new Promise(r => setTimeout(r, 5000 * (i + 1))); continue; }
+      if (status === 429) {
+        console.log(`⏱️ Rate limit (429) na Steam API, tentativa ${i+1}`);
+        await new Promise(r => setTimeout(r, 5000 * (i + 1)));
+        continue;
+      }
       if (i === retries - 1) {
-        if (status !== 403 && status !== 400) {
+        // Se for erro de timeout, loga e propaga o erro
+        if (e.code === 'ECONNABORTED' || e.message.includes('timeout')) {
+          console.error(`⏱️ Timeout na Steam API (${url.split('/').pop()})`);
+        } else if (status !== 403 && status !== 400) {
           console.error(`⚠️ Erro na Steam API (${url.split('/').pop()}): ${status || e.message}`);
         }
         throw e;
@@ -401,20 +419,62 @@ async function fetchSteam(url, params = {}, retries = 3) {
     }
   }
 }
-async function getOwnedGames(steamId) { const d = await fetchSteam('https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/', { steamid: steamId, include_appinfo: true, include_shared_games: true, format: 'json' }); return d?.response?.games || []; }
-async function getRecentlyPlayedGames(steamId, limit = 3) { const d = await fetchSteam('https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/', { steamid: steamId, count: limit, format: 'json' }); return d?.response?.games || []; }
-async function getPlayerAchievements(steamId, appId) { const d = await fetchSteam('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/', { steamid: steamId, appid: appId, format: 'json' }); return d?.playerstats?.achievements || []; }
-async function getGameDetails(appId) {
-  try { const r = await axios.get(`https://store.steampowered.com/api/appdetails?appids=${appId}&l=portuguese`, { timeout: 10000 }); return r.data?.[appId]?.success ? r.data[appId].data : null; } catch (_) { return null; }
+
+// Wrappers com fallback para evitar crashes
+async function getOwnedGames(steamId) {
+  try {
+    const d = await fetchSteam('https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/', { steamid: steamId, include_appinfo: true, include_shared_games: true, format: 'json' });
+    return d?.response?.games || [];
+  } catch (e) {
+    console.error(`❌ Erro ao buscar jogos de ${steamId}: ${e.message}`);
+    return [];
+  }
 }
+
+async function getRecentlyPlayedGames(steamId, limit = 3) {
+  try {
+    const d = await fetchSteam('https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/', { steamid: steamId, count: limit, format: 'json' });
+    return d?.response?.games || [];
+  } catch (e) {
+    console.error(`❌ Erro ao buscar jogos recentes de ${steamId}: ${e.message}`);
+    return [];
+  }
+}
+
+async function getPlayerAchievements(steamId, appId) {
+  try {
+    const d = await fetchSteam('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/', { steamid: steamId, appid: appId, format: 'json' });
+    return d?.playerstats?.achievements || [];
+  } catch (e) {
+    // Se for erro 400 ou 403, é esperado (jogo sem conquistas)
+    if (e.response?.status === 400 || e.response?.status === 403) {
+      return [];
+    }
+    console.error(`❌ Erro ao buscar conquistas de ${steamId} para app ${appId}: ${e.message}`);
+    return [];
+  }
+}
+
+async function getGameDetails(appId) {
+  try {
+    const r = await axios.get(`https://store.steampowered.com/api/appdetails?appids=${appId}&l=portuguese`, { timeout: 10000 });
+    return r.data?.[appId]?.success ? r.data[appId].data : null;
+  } catch (_) { return null; }
+}
+
 async function searchGameOnSteam(query) {
-  const data = await fetchSteam('https://store.steampowered.com/api/storesearch', { term: query, l: 'portuguese', cc: 'BR' }, 1);
-  if (data?.items?.length) {
-    const item = data.items[0];
-    return { appid: item.id, nome: item.name, link: `https://store.steampowered.com/app/${item.id}`, capa: item.tiny_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.id}/header.jpg` };
+  try {
+    const data = await fetchSteam('https://store.steampowered.com/api/storesearch', { term: query, l: 'portuguese', cc: 'BR' }, 1);
+    if (data?.items?.length) {
+      const item = data.items[0];
+      return { appid: item.id, nome: item.name, link: `https://store.steampowered.com/app/${item.id}`, capa: item.tiny_image || `https://cdn.cloudflare.steamstatic.com/steam/apps/${item.id}/header.jpg` };
+    }
+  } catch (e) {
+    console.error(`❌ Erro ao buscar jogo "${query}" na Steam: ${e.message}`);
   }
   return null;
 }
+
 async function getPriceOverview(appId) {
   try {
     const r = await axios.get(`https://store.steampowered.com/api/appdetails?appids=${appId}&cc=br`, { timeout: 10000 });
@@ -425,6 +485,7 @@ async function getPriceOverview(appId) {
   } catch (_) {}
   return null;
 }
+
 async function getCurrentGame(steamId) {
   try {
     const data = await fetchSteam('https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/', { steamids: steamId }, 2);
@@ -443,12 +504,14 @@ async function getSteamWishlist(steamId) {
     return Object.entries(resp.data).filter(([_, d]) => d && d.name).map(([appid, d]) => ({ appid: parseInt(appid), nome: d.name, link: `https://store.steampowered.com/app/${appid}` }));
   } catch (_) { return []; }
 }
+
 async function resolveVanityUrl(vanityName) {
   try {
     const r = await axios.get('https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/', { params: { key: STEAM_KEY, vanityurl: vanityName }, timeout: 10000 });
     return r.data?.response?.success === 1 ? r.data.response.steamid : null;
   } catch (_) { return null; }
 }
+
 async function getSteamWishlistFromLink(link) {
   const profileMatch = link.match(/wishlist\/profiles\/(\d+)/);
   if (profileMatch) return await getSteamWishlist(profileMatch[1]);
@@ -460,7 +523,7 @@ async function getSteamWishlistFromLink(link) {
   return [];
 }
 
-// --- CONQUISTAS COM PORCENTAGEM ---
+// --- CONQUISTAS COM PORCENTAGEM (TRATA ERROS SILENCIOSAMENTE) ---
 async function getPlayerAchievementsWithPercent(steamId, appId) {
   try {
     const playerData = await fetchSteam('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/', { steamid: steamId, appid: appId, format: 'json' });
@@ -475,8 +538,8 @@ async function getPlayerAchievementsWithPercent(steamId, appId) {
   } catch (e) {
     const status = e.response?.status;
     if (status === 403 || status === 400) return null;
-    console.error(`⚠️ Erro ao buscar conquistas para ${appId}: ${status || e.message}`);
-    throw e;
+    console.error(`⚠️ Erro ao buscar conquistas com percentual para ${appId}: ${e.message}`);
+    return null;
   }
 }
 
@@ -1145,7 +1208,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages  // 🔥 ADICIONADO PARA RECEBER DMs
+    GatewayIntentBits.DirectMessages
   ]
 });
 client.on('error', (e) => console.error('❌ [ERROR]', e.message));
